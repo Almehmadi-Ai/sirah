@@ -26,6 +26,21 @@ pytest                  # 130 tests, deterministic
 CI runs exactly these on Python 3.11 and 3.12, plus a secret scan and a
 dependency audit. Please keep all of them green.
 
+## Dependency pins
+
+Direct pins live in `requirements.txt` / `requirements-dev.txt` (mirrored in
+`pyproject.toml`). The full transitive set lives in `requirements-lock.txt`,
+which is what the Security workflow audits with `pip-audit`.
+
+If you change a direct pin, regenerate the lock **against the deploy image** —
+it is interpreter- and platform-specific, so a lock generated on macOS or
+Windows will be wrong (missing `uvloop`, carrying `colorama`):
+
+```bash
+docker run --rm -v "$PWD:/w" -w /w python:3.11-slim-bookworm \
+  sh -c "pip install -q -r requirements.txt && pip freeze --exclude-editable"
+```
+
 ## Guidelines
 
 - **Mock-first.** Any model-dependent behaviour must have a deterministic mock
