@@ -21,11 +21,11 @@ classifiers = [
 
 # Runtime dependencies (mirrored in requirements.txt, which the lock is generated from).
 dependencies = [
-    "fastapi==0.142.2",
+    "fastapi==0.143.0",
     "uvicorn[standard]==0.54.0",
     "python-multipart==0.0.32",
-    "pydantic==2.13.5",
-    "starlette==1.7.0",
+    "pydantic==2.14.1",
+    "starlette==1.8.0",
     "pdfplumber==0.11.10",
     "pypdfium2==5.14.0",
     "pypdf==6.20.1",
@@ -48,7 +48,7 @@ Changelog = "https://github.com/Almehmadi-Ai/sirah/blob/main/CHANGELOG.md"
 dev = [
     "pytest==9.1.1",
     "coverage[toml]==7.16.2",
-    "ruff==0.16.10",
+    "ruff==0.17.0",
     "mypy==2.4.0",
     "fpdf2==2.8.9",
 ]
