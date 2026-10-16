@@ -32,7 +32,7 @@ never to a fabricated *met*).
 
 ## 2. A deterministic mock backend, on by default
 
-**Context.** A reviewer, an interviewer, or CI should be able to run the *whole*
+**Context.** Anyone evaluating the project, and CI, should be able to run the *whole*
 system in seconds without a GPU, a model download, or a network.
 
 **Decision.** Ship a `mock` backend (default) that stands in for every model call
@@ -46,7 +46,7 @@ labelled as demo output, and is grounded the same way the real path is.
   handle different inputs logically.
 
 **Consequences.** The full pipeline (extraction → scoring → audit) is exercised by
-130 deterministic tests with no network, and the project is runnable by anyone
+a deterministic test suite with no network, and the project is runnable by anyone
 immediately. Cost: the mock is a demonstration of *architecture*, not semantic
 quality — real judgment needs `CV_LLM_MODE=ollama`, which the docs state plainly.
 
@@ -82,13 +82,13 @@ detection, and **fpdf2** for authoring synthetic test PDFs. The repository is
 100% free of AGPL/strong-copyleft runtime dependencies (the only weak-copyleft
 dependency is `python-bidi`, LGPL, used unmodified for Arabic shaping).
 
-**Alternatives.** *Keep PyMuPDF and relicense the project AGPL* — rejected: less
-attractive as an open portfolio piece and imposes network-copyleft on any user.
-*Document the AGPL obligation and keep PyMuPDF* — rejected: a permissive stack is
-cleaner and demonstrates license awareness.
+**Alternatives.** *Keep PyMuPDF and relicense the project AGPL* — rejected: it
+would impose network copyleft on every user. *Document the AGPL obligation and
+keep PyMuPDF* — rejected: a permissive stack is simpler for everyone who deploys
+it.
 
-**Consequences.** Clean MIT posture; a `pip-audit` + license review that a
-reviewer can re-run and find nothing to flag.
+**Consequences.** The project stays MIT, with no strong-copyleft runtime
+dependency.
 
 ---
 
@@ -97,9 +97,11 @@ reviewer can re-run and find nothing to flag.
 **Context.** Résumés are dense PII. The safest data is the data you never store.
 
 **Decision.** Everything runs on-box (local Ollama for the optional models).
-Profiles live in a per-chat session with a sliding TTL and then auto-expire;
-`reset` erases them immediately. A startup guard refuses to boot if an off-box
-OCR/vision URL is configured without an explicit allow-flag.
+Profiles live in memory, in a per-chat session with a sliding TTL, and then
+auto-expire; `reset` erases them immediately. Persisting sessions to disk is an
+explicit opt-in (`CV_DATA_DIR`) under the same TTL. A startup guard refuses to
+boot if any endpoint that receives candidate data is off-box, unless the operator
+explicitly opts out (`CV_ALLOW_REMOTE_ENDPOINTS=true`).
 
 **Alternatives.** *Cloud LLM APIs* — rejected: sends candidate PII off-box.
 *Long-term profile storage* — rejected: unnecessary for the use case and a
@@ -128,7 +130,7 @@ error, and `CV_MATCHER=legacy` is an instant, no-rebuild rollback.
 
 **Consequences.** Better semantic accuracy with a deterministic floor and a
 one-flag rollback. In `mock` mode the deterministic matcher *is* the judge, which
-is the honest deterministic stand-in.
+is the deterministic stand-in.
 
 ---
 
@@ -151,22 +153,24 @@ record the allowlisted fields — which is the point.
 
 ---
 
-## 8. The fairness audit consumes external labels; it never infers demographics
+## 8. Adverse-impact reporting consumes external labels; it never infers demographics
 
-**Context.** Measuring adverse impact (EEOC four-fifths / NYC LL144) needs group
-membership — but the system deliberately does not extract protected attributes.
+**Context.** Measuring adverse impact (the four-fifths rule, and the impact ratios
+that bias audits such as NYC Local Law 144's report) needs group membership — but
+the system deliberately does not extract protected attributes.
 
 **Decision.** Protected attributes are never extracted or scored. The four-fifths
-audit takes group labels and a selection set **supplied by the operator** and
-computes per-group selection rates, impact ratios, and an adverse-impact flag.
-The audit also always reports whether any protected attribute leaked into the
+computation takes group labels and a selection set **supplied by the operator**
+and returns per-group selection rates, impact ratios, and an adverse-impact flag.
+The response also always reports whether any protected attribute leaked into the
 scored output (it never does — proven by the golden harness).
 
 **Alternatives.** *Infer demographics from the CV to self-audit* — rejected:
 inferring protected attributes is exactly the harm the system avoids.
 
-**Consequences.** The tool can be audited for fairness without ever profiling
-candidates.
+**Consequences.** Outcomes can be checked for adverse impact — as an input to an
+independent bias audit, which this computation does not replace — without ever
+profiling candidates.
 
 ---
 

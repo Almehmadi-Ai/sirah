@@ -93,13 +93,11 @@ def facts_block(profiles, summary) -> str:
         f"the content was found on) are listed below.\n"
     ]
 
-    # SHARED-NAME NOTICE (deterministic, generic): when two or more NON-duplicate
-    # candidates were extracted with the same name, the model tends to speculate
-    # they are one person 'resubmitting' and to BLEND their separate histories
-    # (a candidate-mixing error). State the fact authoritatively so the model
-    # keeps them distinct. Names are compared case/space-insensitively; anyone
-    # already marked STATUS = DUPLICATE is excluded (that is a real merge, not a
-    # coincidence). No per-batch or per-name assumption - purely data-driven.
+    # SHARED-NAME NOTICE: when two or more NON-duplicate candidates share a name,
+    # a model tends to treat them as one person 'resubmitting' and BLEND their
+    # histories. State the fact so it keeps them distinct. Names are compared
+    # case/space-insensitively; candidates marked DUPLICATE are excluded (that
+    # is a real merge, not a coincidence).
     def _norm_name(nm: str) -> str:
         return re.sub(r"\s+", " ", (nm or "").strip()).lower()
 
@@ -154,7 +152,7 @@ def facts_block(profiles, summary) -> str:
         yrs = f"{yrs:g}" if isinstance(yrs, int | float) else "not stated"
         if tye.get("note"):
             # stated-vs-computed contradiction: the computed value stays
-            # authoritative; the note is surfaced for honest verification.
+            # authoritative; the note asks for verification at interview.
             yrs += f" (VERIFY: {tye['note']})"
         pages = sorted(
             {s["evidence"]["page"] for s in p.get("skills", []) if s.get("evidence")}
@@ -173,6 +171,10 @@ def facts_block(profiles, summary) -> str:
         ]
         for vn in p.get("verification_notes") or []:
             block.append(f"- VERIFY: {vn}.")
+        advisories = p["extraction"].get("advisories") or []
+        if advisories:
+            # non-gating: the candidate stays processed/ranked, the reviewer is told
+            block.append(f"- REVIEW NOTE: {describe_reasons(advisories, 'en')}.")
         # Authoritative per-candidate status, matching the disjoint _summary partition
         # (duplicate takes priority over needs-review). The roster Status follows this.
         if p.get("duplicate_of"):

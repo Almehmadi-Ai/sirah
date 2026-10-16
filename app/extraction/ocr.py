@@ -1,14 +1,31 @@
-"""OCR layer. MVP: local Tesseract (ara+eng) only, used for evidence/assist.
+"""OCR layer: local Tesseract (ara+eng) only, used for evidence/assist.
 
 Hard rules enforced here:
   * OCR output is NEVER authoritative on its own (callers must reconcile/flag).
-  * No cloud OCR endpoint is contacted unless explicitly allowed.
-  * A disabled local-vision cross-check hook is wired for a later phase.
+  * Nothing leaves the machine: Tesseract runs as a local subprocess. Pages it
+    cannot read escalate to the LOCAL vision model (``extraction/vlm.py``),
+    behind the same endpoint-locality guard as every model call.
+  * Failures degrade to empty text with zero confidence (the page is then gated
+    for review downstream); they never abort a batch.
 """
 
 from __future__ import annotations
 
+import io
+import re
 import shutil
+import subprocess
+
+from PIL import Image
+
+from . import pdf_render
+
+# What OCR on an untrusted image can raise: Pillow decode errors (OSError,
+# ValueError, DecompressionBombError for absurd dimensions), Tesseract failures
+# (TesseractError and timeouts are RuntimeError; a missing binary is OSError) and
+# PDFium render errors (PdfiumError is a RuntimeError; IndexError for a page
+# that does not exist).
+_OCR_ERRORS = (OSError, ValueError, RuntimeError, IndexError, Image.DecompressionBombError)
 
 
 def tesseract_available() -> bool:
@@ -19,28 +36,23 @@ def tesseract_langs() -> list:
     if not tesseract_available():
         return []
     try:
-        import subprocess
-
         out = subprocess.run(
             ["tesseract", "--list-langs"], capture_output=True, text=True, timeout=10
         )
-        langs = [ln.strip() for ln in out.stdout.splitlines()[1:] if ln.strip()]
-        return langs
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return []
+    return [ln.strip() for ln in out.stdout.splitlines()[1:] if ln.strip()]
 
 
 def _osd_rotation(img) -> int:
     """Detect page rotation (0/90/180/270) via Tesseract OSD. 0 on failure."""
-    import re
-
     import pytesseract
 
     try:
         osd = pytesseract.image_to_osd(img)
         m = re.search(r"Rotate:\s*(\d+)", osd)
         return int(m.group(1)) % 360 if m else 0
-    except Exception:
+    except _OCR_ERRORS:  # e.g. too few characters for OSD
         return 0
 
 
@@ -68,7 +80,7 @@ def _skew_angle(img) -> float:
         coarse = max(range(-8, 9), key=lambda a: score(float(a)))  # 1 deg grid
         best = max((coarse + 0.2 * k for k in range(-4, 5)), key=score)  # refine to 0.2 deg
         return best if abs(best) >= 0.3 else 0.0
-    except Exception:
+    except _OCR_ERRORS:
         return 0.0
 
 
@@ -89,7 +101,7 @@ def _variants(img):
         if hi - lo > 110:  # flat-field: remove the blurred background
             bg = g.filter(ImageFilter.GaussianBlur(30))
             yield ImageOps.autocontrast(ImageChops.invert(ImageChops.subtract(bg, g)), cutoff=1)
-    except Exception:
+    except _OCR_ERRORS:
         pass
     yield g  # plain grayscale (clean pages)
     e = ImageOps.autocontrast(g, cutoff=2)  # faded/blurred: contrast + unsharp deblur
@@ -132,13 +144,13 @@ def correct_orientation_and_skew(img):
         rot = _osd_rotation(img)
         if rot:
             img = img.rotate(-rot, expand=True)  # OSD 'Rotate' is clockwise
-    except Exception:
+    except _OCR_ERRORS:
         pass
     try:
         ang = _skew_angle(img.convert("L"))  # fine deskew for slightly-skewed scans
         if 0.4 < abs(ang) < 15:
             img = img.rotate(ang, expand=True, fillcolor=255)
-    except Exception:
+    except _OCR_ERRORS:
         pass
     return img
 
@@ -148,21 +160,17 @@ def ocr_png(png_bytes: bytes, langs: str = "ara+eng") -> tuple[str, float]:
     enhances the image (Pillow only) before OCR, then reconstructs the original
     LINE structure. Picks the best of variants by confident word count x confidence,
     so dense / multi-column CVs are read fully."""
-    import io
-
-    from PIL import Image
-
     img = correct_orientation_and_skew(Image.open(io.BytesIO(png_bytes)))
     try:
         cands = list(_variants(img))
-    except Exception:
+    except _OCR_ERRORS:
         cands = [img.convert("L") if img.mode != "L" else img]
 
     best = ("", 0.0, -1.0)
     for proc in cands:
         try:
             text, conf, words = _image_to_lines(proc, langs, "--oem 1 --psm 3")
-        except Exception:
+        except _OCR_ERRORS:
             continue
         score = words * (conf / 100.0)  # favour many confident words
         if score > best[2]:
@@ -175,15 +183,13 @@ def ocr_png(png_bytes: bytes, langs: str = "ara+eng") -> tuple[str, float]:
 def ocr_pages(path: str, page_indices, langs: str = "ara+eng", dpi: int = 300) -> dict:
     """OCR only the requested page indices (0-based). Returns
     {page_index: (text, mean_confidence)}. Renders with pypdfium2 (no Poppler)."""
-    from . import pdf_render
-
     out = {}
     for idx in page_indices:
         try:
             png = pdf_render.render_png(path, idx, dpi=dpi)
             text, conf = ocr_png(png, langs=langs)
             out[idx] = (text, conf)
-        except Exception:
+        except _OCR_ERRORS:
             out[idx] = ("", 0.0)
     return out
 
@@ -193,20 +199,5 @@ def ocr_image_file(path: str, langs: str = "ara+eng") -> tuple[str, float]:
     try:
         with open(path, "rb") as fh:
             return ocr_png(fh.read(), langs=langs)
-    except Exception:
+    except _OCR_ERRORS:
         return "", 0.0
-
-
-def vision_cross_check(png_bytes: bytes, url: str, allow_cloud: bool) -> str | None:
-    """Disabled in MVP (url blank). Returns None unless a *local* vision endpoint is
-    configured and permitted. Never used to authorise a result. Phase-2 hook only."""
-    if not url:
-        return None
-    if not allow_cloud and not _is_local(url):
-        # Refuse to send candidate PII off-box without explicit approval.
-        return None
-    return None  # Phase 2: POST image + structured prompt to a LOCAL vision model.
-
-
-def _is_local(url: str) -> bool:
-    return any(h in url for h in ("localhost", "127.0.0.1", "host.docker.internal", "::1"))

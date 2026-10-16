@@ -1,5 +1,5 @@
 """Semantic similarity via the local bge-m3 model (1024-dim, multilingual) on
-the existing Ollama. Used to match a query/JD/role to candidate skills even when
+the local Ollama. Used to match a query/JD/role to candidate skills even when
 wording differs ('SAP Finance' ~ 'FICO'). Never used as the sole basis for a
 claim — always paired with the literal-evidence skills."""
 

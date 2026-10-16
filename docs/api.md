@@ -11,7 +11,10 @@ Every endpoint except `GET /health` requires the API key in a header:
 X-API-Key: <CV_API_KEY>
 ```
 
-A missing or wrong key returns `401`.
+A missing or wrong key returns `401`. Authentication fails closed: the service
+refuses to start without `CV_API_KEY` (and answers `503` if it is ever reached
+without one), unless `CV_DISABLE_AUTH=true` is set for local development — a
+configured key always takes precedence over that flag.
 
 ## Conventions
 
@@ -34,13 +37,14 @@ Liveness, version, and the active backend mode.
 ```json
 {
   "status": "ok",
-  "service": "cv-screening",
-  "version": "0.1.0",
+  "service": "sirah",
+  "version": "0.2.0",
   "llm_mode": "mock",
   "ocr": { "tesseract": true, "langs": ["ara","eng"], "mode": "auto",
-           "vision_enabled": false, "cloud_ocr": false },
+           "vision_enabled": false },
   "models": { "llm": "qwen3.6:35b", "embed": "bge-m3:latest",
               "ollama": "http://host.docker.internal:11434" },
+  "privacy": { "endpoints_local": true, "remote_endpoints_allowed": false },
   "sessions": { "active": 0, "ttl_minutes": 120 },
   "time": "2026-01-01T00:00:00+00:00"
 }
@@ -58,6 +62,12 @@ Start analysis of a batch. Returns immediately with a `job_id`; poll `status`.
 | `mode` | string | `replace` (default) or `append` (merge into the ready batch) |
 | `options` | string | reserved JSON options (optional) |
 | `signature` | string | client batch signature (optional) |
+
+Files are identified by **content, not by name**: two different CVs both called
+`resume.pdf` (or the same member name in two folders of a ZIP) are each analysed,
+while byte-identical files are flagged `DUPLICATE` of the first copy even when
+they carry no contact details. Each file is streamed to disk and rejected with
+`413` as soon as it exceeds `CV_MAX_UPLOAD_MB`.
 
 **202 Accepted**
 
@@ -136,7 +146,11 @@ an explanatory report — not an error.
 ## `POST /sessions/{chat_id}/audit`  (auth)
 
 Always returns the protected-leakage report. If `labels` **and** `selected` are
-supplied, also returns the EEOC four-fifths / NYC LL144 analysis.
+supplied, also returns four-fifths-rule adverse-impact ratios — figures that
+support a bias audit, not an audit (the labels come from the operator, and a
+regulated audit such as NYC Local Law 144's must be performed independently).
+`labels` and `selected` must be sent together (`422` otherwise), and every
+`selected` value must be a boolean.
 
 ```json
 // request
@@ -175,16 +189,11 @@ Erase the session (memory + any on-disk copy).
 |---|---|
 | `401` | missing/invalid `X-API-Key` |
 | `404` | unknown / expired session |
-| `413` | an uploaded file exceeds `CV_MAX_UPLOAD_MB` |
+| `413` | an uploaded file exceeds `CV_MAX_UPLOAD_MB`, or a ZIP / `.docx` exceeds the decompression limits (zip-bomb defence) |
 | `415` | no usable CV files in the upload |
 | `200` + `scorable:false` / `status:"error"` / review flags | a *result*, not a failure — see conventions above |
 
 ## Configuration (`CV_*` environment variables)
 
-Auth & mode: `CV_API_KEY`, `CV_LLM_MODE` (`mock`|`ollama`), `CV_MATCHER`
-(`judge`|`legacy`). Models: `CV_OLLAMA_URL`, `CV_LLM_MODEL`, `CV_EMBED_MODEL`,
-`CV_VLM_MODEL`. OCR: `CV_OCR_MODE`, `CV_OCR_LANGS`, `CV_OCR_DPI`,
-`CV_OCR_MIN_CONFIDENCE`. Caps: `CV_MAX_FILES`, `CV_MAX_UPLOAD_MB`,
-`CV_MAX_PAGES_PER_DOC`, `CV_MAX_ZIP_ENTRIES`. Session: `CV_SESSION_TTL_MINUTES`,
-`CV_DATA_DIR` (empty disables persistence). See `.env.example` and
-`docker-compose.yml` for defaults.
+Every `CV_*` variable, its default and its effect is listed in
+[configuration.md](configuration.md).

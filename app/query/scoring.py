@@ -1,4 +1,4 @@
-"""Transparent ranking/scoring (plan section 11). A score is a weighted blend of
+"""Transparent ranking/scoring for chat queries. A score is a weighted blend of
 must-have coverage (literal + semantic evidence), years fit (deterministic), and
 semantic role match (bge-m3). Every component is inspectable and every hit
 carries the candidate's own evidence. NEEDS_REVIEW candidates are penalized, not
@@ -133,6 +133,34 @@ def score_candidate(profile, ci, criteria, index) -> dict[str, Any]:
         "semantic": round(sem, 3),
         "needs_review": needs_review,
     }
+
+
+def rank_by_years(candidates) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    """Plain sort on verified years of experience, most first; unknown years
+    last; ties keep roster order (stable sort). No blending, no role-fit term:
+    the user asked for an ordering, not a judgement."""
+
+    def years(p) -> float | None:
+        v = p["total_years_experience"]["value"]
+        return float(v) if isinstance(v, int | float) else None
+
+    ordered = sorted(candidates, key=lambda p: (years(p) is None, -(years(p) or 0.0)))
+    return [
+        (
+            p,
+            {
+                "score": years(p) or 0.0,
+                "coverage": None,
+                "hits": [],
+                "missing": [],
+                "years": years(p) or 0,
+                "semantic": 0.0,
+                "needs_review": p["extraction"]["status"] == "NEEDS_REVIEW",
+                "by_years": True,
+            },
+        )
+        for p in ordered
+    ]
 
 
 def rank(candidates, criteria, index) -> list[tuple[dict[str, Any], dict[str, Any]]]:

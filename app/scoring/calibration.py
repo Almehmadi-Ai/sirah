@@ -1,9 +1,7 @@
 """Judge calibration against a human-authored gold-set, with drift monitoring.
 
 LLM-as-judge is reliable only when its verdicts are periodically checked against
-a fixed, human-authored gold-set and monitored for drift (the consensus best
-practice: keep a gold-set, measure agreement/kappa, alert when divergence
-exceeds ~20-25%). This module:
+a fixed, human-authored gold-set and monitored for drift. This module:
 
   * defines a criterion-level GOLD_SET of known-correct per-requirement verdicts
     (label-agnostic: a case is located by rtype/keyword, so it survives the
@@ -196,22 +194,23 @@ def evaluate(settings, profiles: list[dict[str, Any]], jd_text: str) -> dict[str
     }
 
 
-def _log_path(settings) -> str:
-    d = getattr(settings, "data_dir", "") or "/tmp"
-    return os.path.join(d, "calibration_log.json")
+def _log_path(settings) -> str | None:
+    d = getattr(settings, "data_dir", "") or ""
+    return os.path.join(d, "calibration_log.json") if d else None
 
 
 def record_and_check_drift(settings, metrics: dict[str, Any]) -> dict[str, Any]:
     """Append this run to the calibration log and compare against the baseline
     (the best accuracy recorded to date). Flags drift when the latest accuracy
     falls more than DRIFT_DIVERGENCE below that baseline."""
-    path = _log_path(settings)
+    path = _log_path(settings)  # None: persistence disabled -> no history kept
     log: list[dict[str, Any]] = []
-    try:
-        with open(path, encoding="utf-8") as f:
-            log = json.load(f)
-    except (OSError, ValueError):
-        log = []
+    if path:
+        try:
+            with open(path, encoding="utf-8") as f:
+                log = json.load(f)
+        except (OSError, ValueError):
+            log = []
     entry = {
         "ts": int(time.time()),
         "accuracy": metrics["accuracy"],
@@ -219,11 +218,12 @@ def record_and_check_drift(settings, metrics: dict[str, Any]) -> dict[str, Any]:
         "matcher": metrics.get("matcher"),
     }
     log.append(entry)
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(log[-50:], f, ensure_ascii=False)
-    except OSError:
-        pass
+    if path:
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(log[-50:], f, ensure_ascii=False)
+        except OSError:
+            pass
     baseline = max((e["accuracy"] for e in log[:-1]), default=metrics["accuracy"])
     divergence = round(baseline - metrics["accuracy"], 3)
     return {

@@ -36,5 +36,6 @@ script is the single source of truth and is fully readable.
   `Example Company`, `Demo University`).
 - Emails use the RFC-2606 reserved domain `example.com`, so they reach no real
   inbox. The extractor intentionally treats these as placeholders — positive
-  contact extraction is demonstrated via the (fake) phone numbers.
+  contact extraction is demonstrated via the phone numbers, which come from the
+  North American `555-0100`–`555-0199` range reserved for fictional use.
 - Document metadata is generic (no author identity).

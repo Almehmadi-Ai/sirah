@@ -3,9 +3,9 @@ row, KPI, caption and sentence is produced by deterministic templates over the
 engine's structured results, so reasoning leaks are structurally impossible and
 the same inputs render byte-identical output.
 
-The layout mirrors the established customer-facing format (title, KPI line,
-Top-N caption, ranked table with score bars, evidence, gaps/risks, shortlist,
-review lane, disclaimer) in English or Arabic.
+Layout: title, KPI line, Top-N caption, ranked table with score bars,
+evidence, gaps/risks, shortlist, review lane and disclaimer, in English or
+Arabic.
 """
 
 from __future__ import annotations
@@ -51,6 +51,7 @@ T: dict[str, dict[str, Any]] = {
         "gaps_h": "## Gaps / Risks",
         "short_h": "## Interview Shortlist",
         "review_h": "## Needs Review - Not Scored",
+        "notes_h": "## Review Notes - Scored Candidates",
         "verify": "verify at interview",
         "ocr_note": "OCR-read",
         "yrs": "{y:g} years experience",
@@ -116,6 +117,7 @@ T: dict[str, dict[str, Any]] = {
         "gaps_h": "## الفجوات والمخاطر",
         "short_h": "## القائمة المختصرة للمقابلة",
         "review_h": "## بحاجة إلى مراجعة - لم يتم التقييم",
+        "notes_h": "## ملاحظات للمراجعة - مرشحون تم تقييمهم",
         "verify": "يُتحقق منها في المقابلة",
         "ocr_note": "قراءة OCR",
         "yrs": "خبرة {y:g} سنة",
@@ -255,7 +257,7 @@ def render(
     lines.append(t["sep"])
     any_tie = False
     for r in ranked[:shown]:
-        # partial credits are honestly marked (≈), never presented as full matches
+        # partial credits are marked (≈), never presented as full matches
         matched = _cells(
             [
                 ("≈ " + m["label"]) if m["verdict"] == "partial" else m["label"]
@@ -392,9 +394,28 @@ def render(
                 )
     lines.append(short)
 
+    lines.extend(_notes_section(ranked, t, lang))
     lines.extend(_review_section(review_lane, t, lang))
     lines.extend(["", t["disclaimer"]])
     return "\n".join(lines)
+
+
+def _notes_section(ranked: list[dict[str, Any]], t: dict[str, Any], lang: str = "en") -> list[str]:
+    """Advisories on SCORED candidates (e.g. text addressed to the screening
+    system was neutralised): they keep their rank, and the reviewer is told."""
+    noted = [r for r in ranked if r.get("advisories")]
+    if not noted:
+        return []
+    out = ["", t["notes_h"]]
+    for r in noted:
+        out.append(
+            t["review_row"].format(
+                name=r.get("name") or "(name not detected)",
+                no=r.get("display_no"),
+                reason=describe_reasons(r["advisories"], lang),
+            )
+        )
+    return out
 
 
 def _review_section(
@@ -409,7 +430,7 @@ def _review_section(
                 pct=int(100 * (c.get("verifiable_fraction") or 0))
             )
         else:
-            # honest, code-mapped phrasing — raw flag codes never reach the
+            # code-mapped phrasing — raw flag codes never reach the
             # customer, and 'could not be read' is reserved for unreadable files
             reason = describe_reasons(c.get("flags") or [], lang)
         out.append(
@@ -469,6 +490,12 @@ def facts_appendix(
             f"evidenced: {matched}; "
             f"missing: {', '.join(r.get('missing_required', [])[:4]) or 'none'}"
         )
+    for r in ranked:
+        if r.get("advisories"):
+            lines.append(
+                f"REVIEW NOTE: {r['name']} (CV #{r['display_no']}) - "
+                f"{describe_reasons(r['advisories'], 'en')}"
+            )
     for c in review_lane:
         lines.append(f"NOT SCORED: {c.get('name')} (CV #{c.get('display_no')}) - {c.get('kind')}")
     return "\n".join(lines)

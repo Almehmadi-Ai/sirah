@@ -11,14 +11,16 @@ something to be **measured**, with deterministic tests that run in `mock` mode
 | Layer | What it proves | Runs in |
 |---|---|---|
 | **Unit** | anchors, dedup, scoring engine, rubric de-dup, rendering, query logic | mock, always |
-| **Golden set + harness** | end-to-end extraction correctness, **evidence validity**, **zero protected leakage** | mock, always |
+| **Golden set + harness** | end-to-end extraction correctness, **evidence validity**, **zero protected leakage**, OCR of a scanned CV | mock, always (OCR checks need Tesseract) |
 | **Capability tests** | AR/EN/multilingual extraction, OCR-failure degradation, injection, duplicate/same-name, matched/missing, protected-attr exclusion, four-fifths math, human-review gating, determinism | mock, always |
 | **API-flow tests** | auth, multipart ZIP → ingest → async status → score → audit → reset | mock, always |
 | **Safe-logging tests** | operational logs contain no PII (proven on a real analysis run) | mock, always |
-| **Live tests** (`CV_LIVE_LLM=1`) | extraction/query/golden against a real local model | Ollama, opt-in |
+| **Docs-as-tests** | the README table and `docs/example-output.md` are replayed against the service | mock, always |
+| **Live tests** (`CV_LIVE_LLM=1`) | extraction/query against a real local model; the golden set grades it too | Ollama, opt-in |
 
-**130 tests** run by default, all deterministic and network-free. The four live
-tests are skipped unless `CV_LIVE_LLM=1`.
+The default run is deterministic and network-free. The live tests are skipped
+unless `CV_LIVE_LLM=1`, and the OCR golden checks unless Tesseract is installed
+(CI installs it).
 
 ---
 
@@ -35,10 +37,17 @@ chosen to stress a specific behaviour:
 - **multi-CV-in-one-PDF** — must be flagged.
 - **duplicate** — must be detected and excluded from ranking.
 
+`tests/test_golden.py` runs the harness on every build. CI installs Tesseract
+with English and Arabic data and sets `CV_REQUIRE_OCR=1`, so the OCR checks on
+the scanned CV always run there; on a machine without Tesseract they are skipped
+with that reason, and everything else still runs. `python -m tests.eval_golden`
+prints the full scorecard (CI does too).
+
 The harness (`tests/eval_golden.py`) asserts, for the whole set:
 
-1. **Extraction correctness** — names, emails, phones, years, skills match the
-   ground truth.
+1. **Extraction correctness** — names, phones, years, skills match the ground
+   truth, and a reserved-domain (`example.com`) address is never used as an
+   identity.
 2. **Evidence validity** — 100%: every cited quote actually occurs on the page it
    is attributed to.
 3. **Zero protected leakage** — no protected attribute in any surfaced profile.
@@ -51,7 +60,8 @@ dates, an image-only scan, an exact duplicate, a same-name pair, an embedded
 prompt-injection line, a CV carrying protected attributes, and a
 fairness-equivalent group — with three job descriptions (Arabic, English,
 AI-Engineer) and a ground-truth `manifest.json`. Everything is invented (fictional
-names, generic organisations, `example.com` emails, fake phone numbers).
+names, generic organisations, `example.com` emails, phone numbers from the
+fictional `555-01xx` range — see [NOTICE](../NOTICE)).
 
 ## Judge calibration
 
@@ -61,7 +71,7 @@ drops. This makes judge quality a tracked metric rather than an assumption.
 
 ## Coverage
 
-Line/branch coverage is ~73%. The uncovered remainder is concentrated in the
+Line/branch coverage is ~80%. The uncovered remainder is concentrated in the
 **live-only** code paths (`llm.py`, `vlm.py`, `embeddings.py` — the real Ollama
 HTTP calls) which by definition cannot run in mock mode, plus the secondary
 multi-turn query and append/merge endpoints. The critical paths — extraction,
@@ -71,10 +81,11 @@ grounding, scoring, guardrails, and the API surface — are exercised directly.
 
 ```bash
 pip install -e ".[dev]"
-export CV_API_KEY=dev-key CV_LLM_MODE=mock
+export CV_API_KEY=dev-key    # CV_LLM_MODE defaults to mock
 
-pytest                       # 130 tests, deterministic, no network
+pytest                       # the full suite, deterministic, no network
 coverage run -m pytest && coverage report
+python -m tests.eval_golden /tmp/golden   # golden-set scorecard
 
 # opt-in: run the live tests against a local Ollama
 CV_LIVE_LLM=1 CV_LLM_MODE=ollama pytest tests/test_extract_live.py

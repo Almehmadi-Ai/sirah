@@ -1,14 +1,14 @@
 """Ephemeral per-chat session store — the heart of multi-turn conversational
 analysis. Keyed by a client-supplied ``chat_id``: the batch is analyzed ONCE and the
 extracted candidate profiles + the evolving view-state live here for the life of
-the conversation (sliding TTL), then auto-expire. No long-term PII persistence:
-the TTL policy is unchanged — expiry deletes the on-disk copy too.
+the conversation (sliding TTL), then auto-expire.
 
-Thread-safe (the FastAPI app may touch a session from a request thread and from a
-background analysis thread). READY sessions are additionally persisted to a local
-volume (atomic JSON per chat) so a container restart does not lose an analyzed
-batch mid-conversation; persistence stays inside the same on-box privacy
-envelope and honors the TTL on load.
+Memory-only by default (``data_dir=""``): nothing is written to disk. Thread-safe
+(the FastAPI app may touch a session from a request thread and from a background
+analysis thread). When the operator opts in with a data dir (CV_DATA_DIR), READY
+sessions are also persisted to it (atomic JSON per chat) so a restart does not
+lose an analyzed batch mid-conversation; the copy stays inside the same on-box
+privacy envelope, honors the TTL on load, and is deleted on expiry or reset.
 """
 
 from __future__ import annotations
@@ -21,6 +21,8 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
+
+from .profiles import CandidateProfile
 
 
 def _now() -> float:
@@ -40,13 +42,13 @@ class Session:
     documents: list[dict[str, Any]] = field(default_factory=list)  # per-file acquisition result
 
     # System of record (set when status -> ready)
-    profiles: list[dict[str, Any]] = field(default_factory=list)  # CandidateProfile dicts
+    profiles: list[CandidateProfile] = field(default_factory=list)
     roster_order: list[str] = field(default_factory=list)  # stable candidate_id order
     summary: dict[str, Any] = field(default_factory=dict)
     last_added: int = 0  # candidates added by the most recent append
     processed_hashes: set = field(default_factory=set)  # content hashes of ingested upload files
 
-    # Conversation memory (Section 14 of the plan)
+    # Conversation memory: what follow-up questions refer to
     view_state: dict[str, Any] = field(
         default_factory=lambda: {
             "current_set": [],  # candidate_ids after the latest filter/exclude
@@ -59,6 +61,12 @@ class Session:
 
     created: float = field(default_factory=_now)
     last_access: float = field(default_factory=_now)
+
+    # Derived, in-memory only (deliberately NOT in _PERSIST_FIELDS): candidate
+    # phrase embeddings keyed by the scored pool, reused across job descriptions.
+    phrase_cache: tuple[tuple[str, ...], dict[str, list[float]]] | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def touch(self) -> None:
         self.last_access = _now()

@@ -4,8 +4,10 @@ extraction pipeline, and measures the guarantees that matter for HR:
   * zero protected-attribute leakage
   * candidate count: same-name people NOT merged; multi-CV PDF flagged
   * identity / skill / status correctness; OCR path on scanned CVs
-Run in container:  python tests/eval_golden.py /tmp/golden
-Importable: evaluate(settings, outdir) -> metrics dict.
+Run:  python -m tests.eval_golden /tmp/golden     (mock mode unless CV_LLM_MODE says otherwise)
+Importable: evaluate(settings, outdir) -> metrics dict. Each entry of
+``metrics["details"]`` is (check name, passed, needs_ocr): checks on a scanned
+fixture can only pass where Tesseract (eng + ara) is installed.
 """
 
 import json
@@ -14,6 +16,7 @@ import re
 import sys
 
 from app.config import get_settings
+from app.extraction.ocr import tesseract_available, tesseract_langs
 from app.pipeline import acquire, dedup, extract, segment
 from tests import make_golden
 
@@ -72,17 +75,23 @@ def _protected_leaks(obj):
     return n
 
 
+def ocr_ready() -> bool:
+    """Tesseract plus the English and Arabic language data the pipeline uses."""
+    return tesseract_available() and {"eng", "ara"} <= set(tesseract_langs())
+
+
 def evaluate(settings, outdir):
     make_golden.main(outdir)
     expect = json.load(open(os.path.join(outdir, "expect.json"), encoding="utf-8"))
     checks = []
     ev_ok = ev_tot = leaks = 0
 
-    def add(name, cond):
-        checks.append((name, bool(cond)))
+    def add(name, cond, needs_ocr=False):
+        checks.append((name, bool(cond), bool(needs_ocr)))
 
     for fname, exp in expect.items():
         profs = _profile_for(os.path.join(outdir, fname), settings)
+        ocr = bool(exp.get("ocr"))  # this fixture's CONTENT is only readable via OCR
         add(f"{fname}: candidate_count={exp['candidates']}", len(profs) == exp["candidates"])
         p = profs[0]
         for ev_p in profs:
@@ -91,9 +100,18 @@ def evaluate(settings, outdir):
             ev_tot += t
             leaks += _protected_leaks(ev_p)
         if "name" in exp:
-            add(f"{fname}: name", _norm(p["identity"]["full_name"]["value"]) == _norm(exp["name"]))
+            add(
+                f"{fname}: name",
+                _norm(p["identity"]["full_name"]["value"]) == _norm(exp["name"]),
+                ocr,
+            )
         if "email" in exp:
             add(f"{fname}: email", exp["email"] in p["identity"]["emails"])
+        if "placeholder_email" in exp:
+            add(
+                f"{fname}: reserved-domain email not used as identity",
+                exp["placeholder_email"] not in p["identity"]["emails"],
+            )
         if exp.get("no_email"):
             add(
                 f"{fname}: phone-anchor (no email)",
@@ -110,7 +128,7 @@ def evaluate(settings, outdir):
             add(f"{fname}: multi_cv flagged", "MULTIPLE_CVS_IN_FILE" in p["extraction"]["reasons"])
         for sk in exp.get("must_skills", []):
             names = " ".join(s["name"].lower() for s in p["skills"])
-            add(f"{fname}: skill '{sk}'", sk in names)
+            add(f"{fname}: skill '{sk}'", sk in names, ocr)
 
     # same-name people must NOT be merged or marked duplicate
     sn = _profile_for(os.path.join(outdir, "samename_a.pdf"), settings) + _profile_for(
@@ -125,7 +143,7 @@ def evaluate(settings, outdir):
         len(sn) == 2 and all(p["duplicate_of"] is None for p in sn),
     )
 
-    # an exact duplicate (same email) MUST be flagged
+    # an exact duplicate (same contact details) MUST be flagged
     dup = _profile_for(os.path.join(outdir, "clean.pdf"), settings) + _profile_for(
         os.path.join(outdir, "clean.pdf"), settings
     )
@@ -135,7 +153,7 @@ def evaluate(settings, outdir):
     dedup.mark_duplicates(dup)
     add("duplicate: exact copy flagged", dup[1]["duplicate_of"] == dup[0]["candidate_id"])
 
-    passed = sum(1 for _, ok in checks if ok)
+    passed = sum(1 for _, ok, _ocr in checks if ok)
     metrics = {
         "checks_passed": passed,
         "checks_total": len(checks),
@@ -149,15 +167,24 @@ def evaluate(settings, outdir):
 
 
 if __name__ == "__main__":
+    import tempfile
+
     s = get_settings()
-    m = evaluate(s, sys.argv[1] if len(sys.argv) > 1 else "/tmp/golden")
-    print("\n=== GOLDEN-SET EVALUATION ===")
-    for name, ok in m["details"]:
+    m = evaluate(s, sys.argv[1] if len(sys.argv) > 1 else tempfile.mkdtemp(prefix="golden_"))
+    can_ocr = ocr_ready()
+    print(f"\n=== GOLDEN-SET EVALUATION ({s.llm_mode} mode) ===")
+    failed = 0
+    for name, ok, needs_ocr in m["details"]:
+        if not ok and needs_ocr and not can_ocr:
+            print(f"  [SKIP] {name}  (needs Tesseract with eng+ara)")
+            continue
+        failed += 0 if ok else 1
         print(f"  [{'PASS' if ok else 'FAIL'}] {name}")
     print(f"\n  checks: {m['checks_passed']}/{m['checks_total']}")
     print(
         f"  evidence-validity: {m['evidence_validity'] * 100:.1f}%  ({m['evidence_quotes']} quotes)"
     )
     print(f"  protected leaks:   {m['protected_leaks']}")
-    print(f"  OVERALL: {'PASS' if m['all_passed'] else 'FAIL'}")
-    sys.exit(0 if m["all_passed"] else 1)
+    ok = failed == 0 and m["protected_leaks"] == 0 and m["evidence_validity"] == 1.0
+    print(f"  OVERALL: {'PASS' if ok else 'FAIL'}{'' if can_ocr else ' (OCR checks skipped)'}")
+    sys.exit(0 if ok else 1)

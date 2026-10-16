@@ -40,7 +40,7 @@ rubrics/
 .DS_Store
 Thumbs.db
 
-# --- Backups / scratch (must never enter a portfolio repo) ---
+# --- Backups / scratch ---
 *.bak
 *.bak_*
 *~

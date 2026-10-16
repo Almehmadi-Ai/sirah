@@ -12,7 +12,12 @@ from __future__ import annotations
 from statistics import mean
 from typing import Any
 
+from .. import logging_safe
 from ..extraction import image_only, ocr, pdf_render, pdf_text, vlm
+
+# Rendering a page of an untrusted PDF: PdfiumError is a RuntimeError, a page
+# index past the end is IndexError, and Pillow's PNG encode can raise OSError.
+_RENDER_ERRORS = (RuntimeError, IndexError, OSError, ValueError)
 
 
 def acquire_document(
@@ -59,8 +64,13 @@ def _acquire_docx(name: str, path: str, settings) -> dict[str, Any]:
                 if cells:
                     parts.append(" | ".join(cells))
         text = "\n".join(parts).strip()
-    except Exception:
-        text = ""  # unreadable docx -> empty -> gated to NEEDS_REVIEW downstream
+    # Boundary: python-docx raises an open-ended set of errors on a malformed
+    # upload (BadZipFile, KeyError for missing parts, lxml XMLSyntaxError,
+    # PackageNotFoundError, ...). An unreadable .docx becomes empty text, which
+    # the normal gating routes to Needs Review; the error class is logged.
+    except Exception as e:  # noqa: BLE001
+        logging_safe.log_event("parse_error", error_type=type(e).__name__, stage="docx")
+        text = ""
     page = {"page": 1, "text": text, "source": "text", "ocr_confidence": None}
     return _summarize(name, "docx", [page])
 
@@ -101,7 +111,7 @@ def apply_vlm_rescue(doc: dict[str, Any], settings) -> dict[str, Any]:
         else:
             try:
                 png = pdf_render.render_png(path, p["page"] - 1, dpi=settings.ocr_dpi)
-            except Exception:
+            except _RENDER_ERRORS:
                 continue
         vtext = vlm.transcribe_png(settings, png)
         escalated += 1
@@ -205,7 +215,7 @@ def _acquire_pdf(name: str, path: str, settings, defer_vlm: bool = False) -> dic
                 continue
             try:
                 png = pdf_render.render_png(path, p["page"] - 1, dpi=settings.ocr_dpi)
-            except Exception:
+            except _RENDER_ERRORS:
                 continue
             vtext = vlm.transcribe_png(settings, png)
             escalated += 1

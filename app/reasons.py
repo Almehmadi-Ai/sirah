@@ -1,7 +1,7 @@
 """Customer-facing phrasing for extraction/review flag codes (en/ar).
 
 One shared vocabulary so the screening facts, the fit report and any future
-surface describe a flagged CV the SAME honest way. Raw codes like SPARSE_TEXT
+surface describe a flagged CV the SAME way. Raw codes like SPARSE_TEXT
 are internal; a customer must never see them — and 'could not be read' must be
 reserved for files that were actually unreadable, never for a readable-but-thin
 or non-CV document.
@@ -9,7 +9,8 @@ or non-CV document.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 REASON_PHRASES: dict[str, dict[str, str]] = {
     "UNREADABLE_FILE": {
@@ -50,10 +51,17 @@ REASON_PHRASES: dict[str, dict[str, str]] = {
         "ar": "تحمل بيانات تواصل مطابقة لسيرة أخرى لكن بمحتوى مختلف — تحقق من النسخة الأحدث",
     },
     "INJECTION_SUSPECTED": {
-        "en": "the CV contains text that appears aimed at influencing the "
-        "screening system (it was ignored); manual review required",
-        "ar": "تحتوي السيرة على نص يبدو موجّهًا للتأثير على نظام الفرز (تم "
-        "تجاهله)؛ مطلوب مراجعة يدوية",
+        "en": "the CV contains instructions aimed at the screening system (removed "
+        "before analysis); held for manual review instead of being ranked",
+        "ar": "تحتوي السيرة على تعليمات موجّهة إلى نظام الفرز (أُزيلت قبل التحليل)؛ "
+        "أُحيلت للمراجعة اليدوية بدل ترتيبها",
+    },
+    # Advisory (non-gating): the candidate is still scored.
+    "INJECTION_NEUTRALIZED": {
+        "en": "text addressed to the screening system was removed before analysis; "
+        "scored on the remaining evidence — check the original CV",
+        "ar": "أُزيل نص موجّه إلى نظام الفرز قبل التحليل؛ قُيّم المرشح على بقية "
+        "الأدلة — راجع السيرة الأصلية",
     },
 }
 
@@ -63,8 +71,16 @@ _FALLBACK = {
 }
 
 
+def profile_flags(profile: Mapping[str, Any]) -> list[str]:
+    """Every flag a reviewer should see on a candidate: the gating reasons (any
+    of which means Needs Review) followed by non-gating advisories."""
+    ex = profile.get("extraction") or {}
+    reasons = list(ex.get("reasons") or [])
+    return reasons + [a for a in ex.get("advisories") or [] if a not in reasons]
+
+
 def describe(flags: Iterable[str], lang: str = "en") -> str:
-    """Join the known flags into one honest customer-facing clause."""
+    """Join the known flags into one customer-facing clause."""
     lang = lang if lang in ("en", "ar") else "en"
     out: list[str] = []
     for f in flags or []:

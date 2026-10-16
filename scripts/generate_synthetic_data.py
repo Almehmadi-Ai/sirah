@@ -1,10 +1,11 @@
-"""Generate the fully-synthetic AR/EN demo corpus for privacy-first-cv-screening.
+"""Generate the fully-synthetic AR/EN demo corpus for Sirah.
 
 Everything here is invented. There are NO real people, companies, documents or
 contact details: names are fictional, organisations are generic ("Demo
 Organization", "Example Company"), emails use the RFC-2606 reserved domain
-``example.com`` (guaranteed to reach no real inbox), phone numbers are obviously
-fake, and PDF/DOCX metadata is generic (no author identity). Output is
+``example.com`` (guaranteed to reach no real inbox), phone numbers come from the
+North American 555-0100..0199 range reserved for fiction, and PDF/DOCX metadata
+is generic (no author identity). Output is
 deterministic: the content is hard-coded (no randomness) and document timestamps
 are pinned, so re-running produces the same corpus.
 
@@ -32,7 +33,7 @@ from fpdf import FPDF
 # seed anyway so any future incidental use of random stays reproducible.
 random.seed(1337)
 _FIXED_DATE = _dt.datetime(2024, 1, 1, 0, 0, 0)
-_META_AUTHOR = "privacy-first-cv-screening (synthetic data)"
+_META_AUTHOR = "sirah (synthetic data)"
 
 
 # --------------------------------------------------------------------------
@@ -107,7 +108,7 @@ def _p(text, size=10):
 AR_SENIOR = [
     "سلمان الحربي",
     "مهندس ذكاء اصطناعي أول",
-    "البريد الإلكتروني: salman@example.com | الجوال: +966 50 111 2233",
+    "البريد الإلكتروني: salman@example.com | الجوال: +1 202 555 0121",
     "الملخص",
     "مهندس ذكاء اصطناعي بخبرة في بناء أنظمة الاسترجاع المعزز والوكلاء.",
     "الخبرة",
@@ -123,7 +124,7 @@ AR_SENIOR = [
 AR_JUNIOR = [
     "ريم القحطاني",
     "مطورة برمجيات مبتدئة",
-    "البريد الإلكتروني: reem@example.com | الجوال: +966 55 444 5566",
+    "البريد الإلكتروني: reem@example.com | الجوال: +1 202 555 0122",
     "الخبرة",
     "مطورة برمجيات، شركة تجريبية (2023 - 2024)",
     "التعليم",
@@ -176,7 +177,7 @@ EN_SENIOR_AI = [
 MIXED = [
     "Omar Haddad — عمر حداد",
     "AI Engineer / مهندس ذكاء اصطناعي",
-    "Email: omar@example.com | الجوال: +966 53 222 7788",
+    "Email: omar@example.com | الجوال: +1 202 555 0123",
     "EXPERIENCE / الخبرة",
     "AI Engineer, Demo Organization (2017 - 2024)",
     "مهندس برمجيات، شركة تجريبية (2013 - 2017)",
@@ -276,7 +277,7 @@ def _fair(name, i):
     return [
         _p(name, 18),
         _p("Operations Analyst", 12),
-        _p(f"Email: {name.split()[0].lower()}{i}@example.com | Mobile: +1 202 555 02{i:02d}", 10),
+        _p(f"Email: {name.split()[0].lower()}{i}@example.com | Mobile: +1 202 555 01{40 + i}", 10),
         _p("", 10),
         _p("EXPERIENCE", 12),
         _p("Operations Analyst, Demo Organization (2019 - 2024)", 10),
@@ -463,7 +464,7 @@ def main(out_dir="synthetic_data"):
     with zipfile.ZipFile(os.path.join(bundles, "demo_ai_candidates.zip"), "w") as z:
         for fn in ai_pool:
             z.write(os.path.join(cvs, fn), fn)
-    # English-only demo bundle (for a globally-readable showcase)
+    # English-only demo bundle (used by the README and docs/example-output.md)
     en_pool = [
         "en_senior_ai.pdf",
         "en_mid.pdf",

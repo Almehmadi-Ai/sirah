@@ -66,8 +66,17 @@ def test_multilingual_extraction(corpus):
     assert any(any("؀" <= ch <= "ۿ" for ch in s["name"]) for s in p["skills"])
 
 
-def test_ocr_failure_degrades_to_review(corpus):
-    # image-only PDF; with OCR unavailable it must degrade to NEEDS_REVIEW, not crash
+def test_ocr_failure_degrades_to_review(corpus, monkeypatch):
+    # image-only PDF; with OCR unavailable it must degrade to NEEDS_REVIEW, not
+    # crash. Tesseract's absence is simulated, so the test means the same thing
+    # on a laptop without it and in CI, where it is installed.
+    import pytesseract
+
+    def missing(*_a, **_k):
+        raise pytesseract.TesseractNotFoundError()
+
+    monkeypatch.setattr(pytesseract, "image_to_data", missing)
+    monkeypatch.setattr(pytesseract, "image_to_osd", missing)
     p = _prof(corpus, "scanned_poor.pdf")
     assert p["extraction"]["status"] == "NEEDS_REVIEW"
 

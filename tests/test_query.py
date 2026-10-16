@@ -1,6 +1,8 @@
 """Offline tests for the query layer: reference resolution, query parsing, and
 the intents that need no model (count, compare, years-filter, exclude)."""
 
+import pytest
+
 from app.query import engine, references
 
 
@@ -24,7 +26,7 @@ def mk(no, name, years, skills, status="OK", dup=None):
         "display_no": no,
         "identity": {
             "full_name": {"value": name, "evidence": None},
-            "emails": [name.split()[0].lower() + "@x.com"],
+            "emails": [name.split()[0].lower() + "@contoso.com"],
             "phones": [],
             "links": [],
         },
@@ -188,3 +190,49 @@ def test_facts_block_duplicate_not_treated_as_shared_name():
     profiles = [mk(1, "Ahmed Ali", 8, ["HR"]), mk(2, "Ahmed Ali", 8, ["HR"], dup="c_001")]
     fb = render.facts_block(profiles, {"candidate_count": 2})
     assert "SHARED NAMES" not in fb
+
+
+class _MockSettings:
+    llm_mode = "mock"
+
+
+def test_shortlist_top_n_is_a_count_not_a_role():
+    assert engine._criteria_from_query("shortlist the top 2")["role_text"] == "overall suitability"
+    out = engine.answer(_session(), "shortlist the top 2", _MockSettings())
+    assert out["intent"] == "shortlist" and len(out["candidate_ids"]) == 2
+    assert "“2”" not in out["answer"]
+    # a real role after the count is still read as the role
+    crit = engine._criteria_from_query("top 3 for data engineer")
+    assert crit["role_text"] == "data engineer"
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "rank by years",
+        "rank candidates by years of experience",
+        "sort them by experience",
+        "who is the most experienced?",
+    ],
+)
+def test_rank_by_years_is_a_plain_sort_on_verified_years(question):
+    s = FakeSession(
+        [
+            mk(1, "Dana Ray", 10, ["Python", "SQL", "Docker"]),
+            mk(2, "Eli Stone", 11, ["Excel"], status="NEEDS_REVIEW"),
+            mk(3, "Fay Lin", 8, ["Python"]),
+            mk(4, "Gus Hale", None, ["SQL"]),
+        ]
+    )
+    out = engine.answer(s, question, _MockSettings())
+    assert out["intent"] == "rank"
+    # most years first (flags shown, not used to reorder), unknown years last
+    assert out["candidate_ids"] == ["c_002", "c_001", "c_003", "c_004"]
+    assert "Ranking by years of experience" in out["answer"]
+    assert "— 11 years" in out["answer"] and "LOW_OCR_CONFIDENCE" in out["answer"]
+
+
+def test_years_sort_ties_keep_roster_order():
+    s = FakeSession([mk(1, "Ann Bell", 5, ["SQL"]), mk(2, "Ben Cole", 5, ["SQL"])])
+    out = engine.answer(s, "rank by years", _MockSettings())
+    assert out["candidate_ids"] == ["c_001", "c_002"]

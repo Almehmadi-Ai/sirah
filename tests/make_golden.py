@@ -3,7 +3,12 @@ clean EN, junior, no-email, sparse, a same-name pair (different people),
 a scanned (image-only) CV that forces OCR, and a multi-CV-in-one-PDF.
 Each fixture ships with an `EXPECT` record for the metrics harness.
 
-Usage (in container):  python tests/make_golden.py /tmp/golden
+All content is fictional (see NOTICE). Addresses on the reserved example.com
+domain are deliberately treated as placeholders by the extractor, so the
+multi-CV fixture - whose detection keys on distinct real-looking addresses -
+uses contoso.com, Microsoft's documentation domain for a fictional company.
+
+Usage:  python tests/make_golden.py /tmp/golden
 """
 
 import json
@@ -46,10 +51,10 @@ def _scanned_pdf(path, lines):
     img = Image.new("RGB", (1000, 1400), "white")
     d = ImageDraw.Draw(img)
     try:
-        base = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        base = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"  # fonts-dejavu-core
         fonts = {s: ImageFont.truetype(base, s) for s in (22, 30, 38)}
-    except Exception:
-        fonts = {s: ImageFont.load_default() for s in (22, 30, 38)}
+    except OSError:  # no DejaVu (e.g. Windows/macOS): Pillow's scalable default font
+        fonts = {s: ImageFont.load_default(size=s) for s in (22, 30, 38)}
     y = 50
     for text, size in lines:
         f = fonts.get(38 if size >= 16 else (30 if size >= 12 else 22), fonts[22])
@@ -61,14 +66,14 @@ def _scanned_pdf(path, lines):
 CLEAN = [
     ("Ahmed Ali", 18),
     ("Senior HR Specialist", 12),
-    ("Email: ahmed.ali@acmecorp-hr.com  |  Mobile: +966 50 123 4567", 10),
+    ("Email: ahmed.ali@example.com  |  Mobile: +1 202 555 0111", 10),
     ("", 10),
     ("EXPERIENCE", 12),
-    ("Senior HR Specialist, Saudi Telecom (2021 - present)", 10),
-    ("HR Officer, Almarai (2018 - 2021)", 10),
+    ("Senior HR Specialist, Example Telecom (2021 - present)", 10),
+    ("HR Officer, Demo Foods (2018 - 2021)", 10),
     ("", 10),
     ("EDUCATION", 12),
-    ("BSc Business Administration, King Saud University, 2017", 10),
+    ("BSc Business Administration, Demo University, 2017", 10),
     ("", 10),
     ("SKILLS", 12),
     ("Recruitment, Talent Acquisition, SAP SuccessFactors, Onboarding, Payroll", 10),
@@ -76,18 +81,18 @@ CLEAN = [
 NO_EMAIL = [
     ("Khalid Omar", 18),
     ("Recruiter", 12),
-    ("Mobile: +966 53 444 7788  |  Dammam, Saudi Arabia", 10),
+    ("Mobile: +1 202 555 0114  |  Dammam, Saudi Arabia", 10),
     ("", 10),
     ("PROFESSIONAL SUMMARY", 12),
     ("Recruiter with 5 years of experience in sourcing and full-cycle hiring across the Gulf.", 10),
     ("", 10),
     ("EXPERIENCE", 12),
-    ("Recruiter, Gulf Foods (2019 - present)", 10),
+    ("Recruiter, Example Foods (2019 - present)", 10),
     ("- Managed end-to-end recruitment for retail and logistics roles.", 10),
-    ("Talent Sourcer, Hire Co (2017 - 2019)", 10),
+    ("Talent Sourcer, Example Staffing (2017 - 2019)", 10),
     ("", 10),
     ("EDUCATION", 12),
-    ("BSc Management, King Fahd University, 2016", 10),
+    ("BSc Management, Example University, 2016", 10),
     ("", 10),
     ("SKILLS", 12),
     ("Recruitment, Sourcing, Interviewing, Onboarding, Stakeholder Management", 10),
@@ -96,10 +101,10 @@ SPARSE = [("Min Lee", 18), ("Looking for opportunities.", 10)]
 SAMENAME_A = [
     ("Mohammed Ali", 18),
     ("HR Manager", 12),
-    ("Email: mohammed.ali1@acmecorp-hr.com", 10),
+    ("Email: mohammed.ali1@example.com  |  Mobile: +1 202 555 0115", 10),
     ("", 10),
     ("EXPERIENCE", 12),
-    ("HR Manager, Acme (2016 - present)", 10),
+    ("HR Manager, Demo Holdings (2016 - present)", 10),
     ("", 10),
     ("SKILLS", 12),
     ("Recruitment, SAP HCM, Compensation, Payroll", 10),
@@ -107,10 +112,10 @@ SAMENAME_A = [
 SAMENAME_B = [
     ("Mohammed Ali", 18),
     ("Talent Acquisition Specialist", 12),
-    ("Email: mohammed.ali2@acmecorp-hr.com", 10),
+    ("Email: mohammed.ali2@example.com  |  Mobile: +1 202 555 0116", 10),
     ("", 10),
     ("EXPERIENCE", 12),
-    ("TA Specialist, Beta Corp (2020 - present)", 10),
+    ("TA Specialist, Demo Corp (2020 - present)", 10),
     ("", 10),
     ("SKILLS", 12),
     ("Recruitment, Sourcing, Employer Branding", 10),
@@ -118,11 +123,11 @@ SAMENAME_B = [
 SCANNED = [
     ("Noura Saleh", 18),
     ("HR Analyst", 12),
-    ("Email: noura.saleh@acmecorp-hr.com", 10),
-    ("Mobile: +966 50 222 3344", 10),
+    ("Email: noura.saleh@example.com", 10),
+    ("Mobile: +1 202 555 0117", 10),
     ("", 10),
     ("EXPERIENCE", 12),
-    ("HR Analyst, Tatweer (2019 - present)", 10),
+    ("HR Analyst, Demo Analytics (2019 - present)", 10),
     ("", 10),
     ("SKILLS", 12),
     ("HR Analytics, Recruitment, Excel, SAP SuccessFactors", 10),
@@ -130,15 +135,15 @@ SCANNED = [
 MULTI_P1 = [
     ("Fatima Noor", 18),
     ("Payroll Officer", 12),
-    ("Email: fatima.noor@acmecorp-hr.com", 10),
-    ("Payroll Officer, NB Co (2018 - present)", 10),
+    ("Email: fatima.noor@contoso.com", 10),
+    ("Payroll Officer, Sample Co (2018 - present)", 10),
     ("Skills: Payroll, GOSI, Excel", 10),
 ]
 MULTI_P2 = [
     ("Yousef Tariq", 18),
     ("Recruiter", 12),
-    ("Email: yousef.tariq@acmecorp-hr.com", 10),
-    ("Recruiter, NB Co (2020 - present)", 10),
+    ("Email: yousef.tariq@contoso.com", 10),
+    ("Recruiter, Sample Co (2020 - present)", 10),
     ("Skills: Recruitment, Sourcing", 10),
 ]
 
@@ -146,7 +151,8 @@ MULTI_P2 = [
 EXPECT = {
     "clean.pdf": {
         "name": "Ahmed Ali",
-        "email": "ahmed.ali@acmecorp-hr.com",
+        "placeholder_email": "ahmed.ali@example.com",  # reserved domain: never an identity
+        "phone_digits": "2025550111",
         "must_skills": ["sap successfactors", "recruitment"],
         "min_years": 5,
         "status": "OK",
@@ -154,7 +160,7 @@ EXPECT = {
     },
     "no_email.pdf": {
         "name": "Khalid Omar",
-        "phone_digits": "534447788",
+        "phone_digits": "2025550114",
         "status": "OK",
         "candidates": 1,
         "no_email": True,
@@ -162,12 +168,12 @@ EXPECT = {
     "sparse.pdf": {"name": "Min Lee", "status": "NEEDS_REVIEW", "candidates": 1},
     "samename_a.pdf": {
         "name": "Mohammed Ali",
-        "email": "mohammed.ali1@acmecorp-hr.com",
+        "phone_digits": "2025550115",
         "candidates": 1,
     },
     "samename_b.pdf": {
         "name": "Mohammed Ali",
-        "email": "mohammed.ali2@acmecorp-hr.com",
+        "phone_digits": "2025550116",
         "candidates": 1,
     },
     "scanned.pdf": {

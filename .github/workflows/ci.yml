@@ -21,11 +21,21 @@ jobs:
       # no external services. Deterministic and self-contained.
       CV_LLM_MODE: mock
       CV_API_KEY: ci-test-key
+      # Tesseract is installed below, so the OCR golden checks must run here:
+      # tests/test_golden.py fails instead of skipping them.
+      CV_REQUIRE_OCR: "1"
     steps:
       - uses: actions/checkout@v7
 
+      - name: Install Tesseract OCR (eng + ara) for the golden set
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            tesseract-ocr tesseract-ocr-eng tesseract-ocr-ara fonts-dejavu-core
+          tesseract --list-langs
+
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -48,3 +58,6 @@ jobs:
         run: |
           coverage run -m pytest
           coverage report
+
+      - name: Golden-set scorecard
+        run: python -m tests.eval_golden "$RUNNER_TEMP/golden"

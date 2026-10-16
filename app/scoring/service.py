@@ -5,7 +5,7 @@ verdicts -> engine aggregation -> engine ranking -> code-rendered report.
 Results are cached per (jd_hash, lang, top_n) inside the session, so repeating
 the same JD in a chat returns the identical bytes instantly.
 
-Exclusions (honest lanes, never silent):
+Exclusions (each one listed, never silent):
   * duplicates             -> excluded entirely (counted in the KPI)
   * NEEDS_REVIEW extraction-> review lane, listed under 'Needs Review'
   * insufficient evidence  -> review lane (engine refused to score)
@@ -67,6 +67,7 @@ def _display(profile: dict[str, Any]) -> dict[str, Any]:
         "name": name or "(name not detected)",
         "years": (profile.get("total_years_experience") or {}).get("value"),
         "field_coverage": (profile.get("extraction") or {}).get("field_coverage"),
+        "advisories": list((profile.get("extraction") or {}).get("advisories") or []),
     }
 
 
@@ -122,15 +123,12 @@ def score_session(
     # persistence; recomputed after a restart or an append/reset that changes the
     # candidate set). Only the JD's requirement texts are embedded per score.
     pool_key = tuple(p["candidate_id"] for p in scored_pool)
-    cached = getattr(session, "_phrase_cache", None)
+    cached = session.phrase_cache
     if cached is not None and cached[0] == pool_key:
         phrase_vecs = cached[1]
     else:
         phrase_vecs = match.phrase_vectors(settings, scored_pool)
-        try:
-            session._phrase_cache = (pool_key, phrase_vecs)
-        except Exception:  # pragma: no cover - exotic session objects
-            pass
+        session.phrase_cache = (pool_key, phrase_vecs)
     req_vecs = match.requirement_vectors(settings, rub)
 
     results: list[dict[str, Any]] = []

@@ -1,10 +1,10 @@
 """Turn acquired documents into candidate units.
 
-MVP rule: 1 document = 1 candidate (the most reliable separation). When a single
+Rule: 1 document = 1 candidate (the most reliable separation). When a single
 PDF appears to contain MULTIPLE distinct people (more than one primary email
 anchor across its pages), we do NOT silently merge or mis-split — we keep it as
-one candidate but flag ``multi_cv`` so it is routed to human review. Full
-boundary-splitting of multi-CV PDFs is deferred to the production phase.
+one candidate but flag ``multi_cv`` so it is routed to human review. Splitting
+a multi-CV PDF at candidate boundaries is not implemented.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ def documents_to_candidates(documents: list[dict[str, Any]]) -> list[dict[str, A
         candidates.append(
             {
                 "document": doc.get("file"),
+                "sha256": doc.get("sha256"),
                 "container": doc.get("container"),
                 "kind": doc.get("kind"),
                 "pages": pages,

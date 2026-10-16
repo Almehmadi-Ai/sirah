@@ -46,7 +46,7 @@ def test_session_id_is_hashed_never_raw():
 
 
 def test_slug_fields_strip_free_text_and_pii():
-    rec = logging_safe.log_event("evt", status="ready name=Ahmed Ali <ahmed@x.com>")
+    rec = logging_safe.log_event("evt", status="ready name=Ahmed Ali <ahmed@example.com>")
     assert " " not in rec["status"] and "@" not in rec["status"] and "<" not in rec["status"]
 
 
@@ -72,9 +72,10 @@ def test_full_analyze_run_logs_contain_no_pii(tmp_path, monkeypatch, caplog):
     monkeypatch.setenv("CV_API_KEY", "test-key")
     monkeypatch.setenv("CV_DATA_DIR", "")
 
-    from app import main
     from app.config import get_settings
-    from app.session_store import Session
+    from app.pipeline.ingest import StoredUpload
+    from app.service import AnalysisService
+    from app.session_store import Session, SessionStore
     from tests import make_fixtures
 
     make_fixtures.main(str(tmp_path))
@@ -82,10 +83,13 @@ def test_full_analyze_run_logs_contain_no_pii(tmp_path, monkeypatch, caplog):
     upl = str(tmp_path / "upl")
     os.makedirs(upl, exist_ok=True)
 
-    pii_markers = ["Ahmed", "Ali", "acmecorp", "4567", "@", "Riyadh", "Almarai"]
+    pii_markers = ["Ahmed", "Ali", "example.com", "0111", "@", "Riyadh", "Demo Foods"]
     sess = Session(chat_id="chat-secret-xyz")
-    with caplog.at_level(logging.INFO, logger="cv_screening"):
-        main._run_analysis(sess, [("cv_ahmed.pdf", ahmed)], upl, get_settings())
+    with caplog.at_level(logging.INFO, logger="sirah"):
+        upload = StoredUpload("cv_ahmed.pdf", ahmed, "0" * 64)
+        AnalysisService(SessionStore())._run_analysis(
+            sess, [upload], upl, get_settings(), {upload.sha256}
+        )
 
     assert sess.status == "ready", f"analysis did not complete: {sess.error}"
     blob = "\n".join(r.getMessage() for r in caplog.records)

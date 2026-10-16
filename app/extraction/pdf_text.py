@@ -1,19 +1,33 @@
 """Generic text + table extraction from a PDF's text layer (pdfplumber primary,
-pypdf fallback), now LAYOUT-AWARE: multi-column and sidebar pages are detected
+pypdf fallback), layout-aware: multi-column and sidebar pages are detected
 from word coordinates (a persistent vertical gutter) and each column is read
-separately in the correct order, so two-column/designer CVs no longer interleave
-lines from unrelated columns.
+separately in the correct order, so lines from unrelated columns of a
+two-column CV are never interleaved.
 
 Detection is geometric and template-free: no section names, no CV assumptions.
 It is deliberately conservative — a page is only split when a clear gutter
 separates two substantial word groups that overlap vertically; anything
 ambiguous falls back to pdfplumber's default reading order. Column order is
 left-to-right, or right-to-left when the page is predominantly Arabic (RTL).
+
+Error handling: pdfminer (behind pdfplumber) and pypdf raise a long,
+undocumented tail of exception types on malformed input (PDFSyntaxError, PSEOF,
+KeyError, TypeError, struct.error, RecursionError, ...). An uploaded PDF is
+untrusted, so each parser call below is a deliberate BOUNDARY: a failure
+degrades that page or document to empty text (gated for review downstream), is
+logged by error class, and never aborts a batch.
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+from .. import logging_safe
+
+
+def _parse_failed(e: Exception, stage: str) -> None:
+    logging_safe.log_event("parse_error", error_type=type(e).__name__, stage=stage)
+
 
 # --- conservative column-detection policy (geometry, not templates) ---
 _MIN_WORDS = 40  # too few words -> not worth splitting
@@ -80,7 +94,8 @@ def _extract_columns(page) -> tuple[str, int]:
     Returns (text, columns_used). Any anomaly -> default extraction."""
     try:
         default_text = page.extract_text() or ""
-    except Exception:
+    except Exception as e:  # noqa: BLE001 - parser boundary (module docstring)
+        _parse_failed(e, "pdf_page_text")
         default_text = ""
     try:
         words = page.extract_words() or []
@@ -95,7 +110,7 @@ def _extract_columns(page) -> tuple[str, int]:
             return default_text, 1
         first, second = (rt, lt) if _arabic_ratio(default_text) > 0.30 else (lt, rt)
         return first + "\n\n" + second, 2
-    except Exception:
+    except Exception:  # noqa: BLE001 - parser boundary; the default text is still good
         return default_text, 1
 
 
@@ -105,7 +120,7 @@ def read_pdf(path: str) -> list[dict[str, Any]]:
     pages: list[dict[str, Any]] = []
     try:
         import pdfplumber
-    except Exception:  # pragma: no cover - import guard
+    except ImportError:  # pragma: no cover - import guard
         return _pypdf_only(path)
 
     try:
@@ -114,12 +129,14 @@ def read_pdf(path: str) -> list[dict[str, Any]]:
                 text, cols = _extract_columns(page)
                 try:
                     tables = page.extract_tables() or []
-                except Exception:
+                except Exception as e:  # noqa: BLE001 - parser boundary
+                    _parse_failed(e, "pdf_tables")
                     tables = []
                 pages.append({"page": i + 1, "text": text, "tables": tables, "columns": cols})
-    except Exception:
+    except Exception as e:  # noqa: BLE001 - parser boundary
         # Corrupt / non-PDF bytes must never abort a whole batch: try pypdf,
         # and let a total failure surface as an empty (unreadable) document.
+        _parse_failed(e, "pdfplumber")
         return _pypdf_only(path)
     return pages
 
@@ -133,9 +150,10 @@ def _pypdf_only(path: str) -> list[dict[str, Any]]:
         for i, page in enumerate(reader.pages):
             try:
                 text = page.extract_text() or ""
-            except Exception:
+            except Exception as e:  # noqa: BLE001 - parser boundary
+                _parse_failed(e, "pypdf_page_text")
                 text = ""
             pages.append({"page": i + 1, "text": text, "tables": [], "columns": 1})
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 - parser boundary
+        _parse_failed(e, "pypdf")
     return pages

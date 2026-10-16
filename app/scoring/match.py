@@ -24,10 +24,12 @@ same concept differently worded; >=SEM_PARTIAL means closely related.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any
 
 from ..pipeline.anchors import compute_total_years
-from ..pipeline.extract import verify_term
+from ..pipeline.evidence import verify_term
+from ..profiles import Evidence
 from ..query import embeddings
 from .rubric import DEGREE_LEVELS
 
@@ -49,7 +51,7 @@ def _page_source(profile: dict[str, Any], page_no: int | None) -> str:
     return "text"
 
 
-def _ev(profile: dict[str, Any], hit: dict[str, Any] | None) -> dict[str, Any] | None:
+def _ev(profile: dict[str, Any], hit: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if not hit:
         return None
     return {
@@ -170,7 +172,7 @@ def _match_years(
 
     # If the JD qualifies the tenure with a DOMAIN ("... of software development
     # experience"), only years in evidenced-domain roles fully satisfy it —
-    # general tenure alone earns at most partial credit, with an honest detail.
+    # general tenure alone earns at most partial credit, and the detail says so.
     terms = _domain_terms(req)
     if terms:
         label = terms[0][:40]
@@ -389,7 +391,7 @@ def _match_terms(profile: dict[str, Any], req: dict[str, Any]) -> dict[str, Any]
     so 'R' never matches inside 'Recruitment'). ANY keyword satisfies (JD
     alternatives are alternatives)."""
     pages = _pages(profile)
-    hits: list[tuple[str, dict[str, Any]]] = []
+    hits: list[tuple[str, Evidence]] = []
     for kw in req.get("keywords") or []:
         h = verify_term(kw, pages, min_len=2)
         if h:

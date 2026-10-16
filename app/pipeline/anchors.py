@@ -2,15 +2,15 @@
 
 These are the fields we must NOT trust an LLM to invent: emails, phones, links,
 and total years of experience. The LLM may *point* at dated roles, but the year
-math is done here so no number is hallucinated (the financial_calculator
-principle). Also exposes per-page identity anchors used for candidate
-segmentation and within-batch dedup.
+math is done here so no number is hallucinated. Also provides the identity
+keys used for candidate segmentation and within-batch dedup.
 """
 
 from __future__ import annotations
 
 import datetime as _dt
 import re
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
@@ -39,8 +39,7 @@ def normalize_digits(s: str | None) -> str:
 
 # Placeholder emails are not real contacts: RFC-2606 reserved domains and
 # universal template local-parts ("your.email@..."). Filtering them keeps
-# identity anchors, dedup keys, and the roster honest. Generic by standard /
-# template vocabulary - not tied to any dataset.
+# identity anchors, dedup keys and the roster clean.
 _PLACEHOLDER_DOMAIN_RE = re.compile(
     r"(^|\.)example\.(com|net|org)$|\.(test|invalid|localhost|example)$", re.I
 )
@@ -113,17 +112,6 @@ def phone_key(phone: str) -> str:
     return _digits(normalize_digits(phone))[-9:]
 
 
-def primary_anchor(text: str | None) -> str | None:
-    """A page/candidate's primary identity anchor: first email, else first phone."""
-    emails = find_emails(text)
-    if emails:
-        return "email:" + emails[0]
-    phones = find_phones(text)
-    if phones:
-        return "phone:" + phone_key(phones[0])
-    return None
-
-
 # --------------------------------------------------------------- year math
 def parse_year_token(s: str | None) -> int | None:
     s = normalize_digits(s)
@@ -185,7 +173,7 @@ def parse_date_token(s: str | None) -> tuple[int | None, int | None]:
     return year, None
 
 
-def compute_total_years(experiences: list[dict[str, Any]]) -> tuple[float | None, int]:
+def compute_total_years(experiences: Sequence[Mapping[str, Any]]) -> tuple[float | None, int]:
     """Union of dated employment intervals -> total years (no double counting of
     overlapping roles). MONTH-AWARE when the CV states months ('June 2015',
     '03/2022'): a Dec 2018 -> Jan 2019 role change stays contiguous and totals
@@ -200,8 +188,8 @@ def compute_total_years(experiences: list[dict[str, Any]]) -> tuple[float | None
         if not (ay and by) or by < ay or not (1950 <= ay):
             continue
         # Months count only when BOTH endpoints state one ('June 2015 - Dec 2018',
-        # 'March 2022 - Present'); a bare-year endpoint keeps the whole interval
-        # on the historical year arithmetic so existing outputs do not drift.
+        # 'March 2022 - Present'); with a bare-year endpoint the whole interval
+        # uses whole-year arithmetic.
         months_known = am is not None and bm is not None
         if not months_known:
             am = bm = None

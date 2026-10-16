@@ -1,77 +1,34 @@
-"""End-to-end HTTP API flow in mock mode: the real service surface (auth,
-multipart ZIP upload -> ingest, async status polling, scoring, fairness audit,
-reset). Exercises the paths a unit test cannot: routing, auth, file handling and
-the background worker - all with zero models."""
+"""End-to-end HTTP API flow in mock mode: the real service surface (multipart
+ZIP upload -> ingest, async status polling, scoring, adverse-impact report,
+reset). Exercises the paths a unit test cannot: routing, file handling and the
+background worker - all with zero models. Authentication has its own module."""
 
+import logging
 import os
-import tempfile
-import time
 
 import pytest
-from fastapi.testclient import TestClient
 
-KEY = "secret-test-key"
-HEADERS = {"X-API-Key": KEY}
+from tests import make_fixtures
 
 
-@pytest.fixture(autouse=True)
-def _env(monkeypatch):
-    monkeypatch.setenv("CV_LLM_MODE", "mock")
-    monkeypatch.setenv("CV_API_KEY", KEY)
-    monkeypatch.setenv("CV_DATA_DIR", "")
-
-
-@pytest.fixture
-def client(monkeypatch):
-    from app import main
-
-    monkeypatch.setattr(main._STORE, "_dir", "")  # no on-disk persistence in the test
-    return TestClient(main.app)
-
-
-def _cvs_zip() -> bytes:
-    from tests import make_fixtures
-
-    d = tempfile.mkdtemp()
-    make_fixtures.main(d)
+@pytest.fixture(scope="module")
+def cvs_zip(tmp_path_factory):
+    d = tmp_path_factory.mktemp("fixtures")
+    make_fixtures.main(str(d))
     with open(os.path.join(d, "cvs.zip"), "rb") as f:
         return f.read()
 
 
-def _wait_ready(client, cid, timeout=20.0):
-    st = {}
-    for _ in range(int(timeout / 0.2)):
-        st = client.get(f"/sessions/{cid}/status", headers=HEADERS).json()
-        if st.get("status") in ("ready", "error"):
-            return st
-        time.sleep(0.2)
-    return st
-
-
-def test_health_is_open_no_auth(client):
-    r = client.get("/health")
-    assert r.status_code == 200
-    assert r.json()["service"] == "cv-screening" and r.json()["llm_mode"] == "mock"
-
-
-def test_auth_required_on_protected_endpoints(client):
-    assert client.get("/sessions/x/status").status_code == 401
-    assert client.get("/sessions/x/status", headers={"X-API-Key": "wrong"}).status_code == 401
-
-
-def test_full_flow_analyze_status_score_audit_reset(client):
-    zip_bytes = _cvs_zip()
-
+def test_full_flow_analyze_status_score_audit_reset(api, wait_ready, cvs_zip):
     # 1. analyze a multipart ZIP (exercises ingest + async worker)
-    r = client.post(
+    r = api.post(
         "/sessions/flow/analyze",
-        headers=HEADERS,
-        files={"files": ("cvs.zip", zip_bytes, "application/zip")},
+        files={"files": ("cvs.zip", cvs_zip, "application/zip")},
     )
     assert r.status_code == 202
 
     # 2. poll status until the background worker publishes the batch
-    st = _wait_ready(client, "flow")
+    st = wait_ready(api, "flow")
     assert st["status"] == "ready", f"analysis did not finish: {st}"
     assert st["candidate_count"] >= 2
     assert st["llm_mode"] == "mock"
@@ -81,40 +38,85 @@ def test_full_flow_analyze_status_score_audit_reset(client):
 
     # 3. score against a JD -> matched/missing + ranking
     jd = "Recruiter\nRequired skills: Recruitment, Onboarding\nMinimum 3 years experience."
-    sc = client.post("/sessions/flow/score", headers=HEADERS, json={"jd_text": jd}).json()
+    sc = api.post("/sessions/flow/score", json={"jd_text": jd}).json()
     assert sc["scorable"] is True and sc["ranking"]
     assert sc["llm_mode"] == "mock"
 
     # 4a. audit with no body -> always returns the protected-leakage report
-    a1 = client.post("/sessions/flow/audit", headers=HEADERS, json={}).json()
+    a1 = api.post("/sessions/flow/audit", json={}).json()
     assert a1["leakage"]["clean"] is True  # no protected fields were extracted
 
-    # 4b. audit with synthetic labels/selection -> EEOC four-fifths analysis.
+    # 4b. audit with synthetic labels/selection -> four-fifths adverse-impact ratios.
     # group A selected, group B not -> adverse impact on B.
     labels = {cids[0]: {"grp": "A"}, cids[1]: {"grp": "B"}}
     selected = {cids[0]: True, cids[1]: False}
-    a2 = client.post(
-        "/sessions/flow/audit", headers=HEADERS, json={"labels": labels, "selected": selected}
-    ).json()
+    a2 = api.post("/sessions/flow/audit", json={"labels": labels, "selected": selected}).json()
     ff = a2["adverse_impact"]
     assert ff["adverse_impact"] is True
     assert ff["axes"]["grp"]["groups"]["B"]["impact_ratio"] < 0.8
 
     # 5. reset drops the session (privacy)
-    rr = client.post("/sessions/flow/reset", headers=HEADERS)
+    rr = api.post("/sessions/flow/reset")
     assert rr.status_code == 200 and rr.json()["reset"] is True
-    gone = client.get("/sessions/flow/status", headers=HEADERS)
+    gone = api.get("/sessions/flow/status")
     assert gone.status_code == 404
 
 
-def test_unsupported_upload_is_handled(client):
+def test_unsupported_upload_is_handled(api, wait_ready):
     # a file with no supported CV content must not crash the worker
-    r = client.post(
+    r = api.post(
         "/sessions/bad/analyze",
-        headers=HEADERS,
         files={"files": ("note.txt", b"just some notes", "text/plain")},
     )
     assert r.status_code == 202
-    st = _wait_ready(client, "bad")
-    # unsupported content -> the batch finishes in an error/empty state, gracefully
-    assert st["status"] in ("error", "ready")
+    st = wait_ready(api, "bad")
+    assert st["status"] == "error" and "no supported CV files" in st["error"]
+
+
+def test_audit_request_is_validated(api, wait_ready, cvs_zip):
+    api.post("/sessions/aud/analyze", files={"files": ("cvs.zip", cvs_zip, "application/zip")})
+    cids = [c["candidate_id"] for c in wait_ready(api, "aud")["roster"]]
+
+    # no body / empty body -> the leakage report alone
+    assert set(api.post("/sessions/aud/audit").json()) == {"chat_id", "leakage"}
+    assert "adverse_impact" not in api.post("/sessions/aud/audit", json={}).json()
+    # labels without the selection outcome (or vice versa) is a client error
+    only_labels = {"labels": {cids[0]: {"grp": "A"}}}
+    assert api.post("/sessions/aud/audit", json=only_labels).status_code == 422
+    # a selection value that is not a boolean is rejected, not silently coerced
+    bad = {"labels": {cids[0]: {"grp": "A"}}, "selected": {cids[0]: "maybe"}}
+    assert api.post("/sessions/aud/audit", json=bad).status_code == 422
+    # numeric group labels are accepted and compared as text
+    ok = {
+        "labels": {cids[0]: {"band": 1}, cids[1]: {"band": 2}},
+        "selected": {cids[0]: True, cids[1]: False},
+    }
+    groups = api.post("/sessions/aud/audit", json=ok).json()["adverse_impact"]["axes"]["band"]
+    assert set(groups["groups"]) == {"1", "2"}
+
+
+def test_unknown_session_is_404_on_every_endpoint(api):
+    for method, path in [
+        ("get", "status"),
+        ("get", "facts"),
+        ("post", "audit"),
+    ]:
+        r = getattr(api, method)(f"/sessions/nobody/{path}")
+        assert r.status_code == 404 and "no active session" in r.json()["detail"]
+    assert api.post("/sessions/nobody/query", json={"question": "count"}).status_code == 404
+    assert api.post("/sessions/nobody/score", json={"jd_text": "x"}).status_code == 404
+
+
+def test_corrupt_documents_degrade_to_review_and_are_logged(api, wait_ready, caplog):
+    files = [
+        ("files", ("broken.pdf", b"%PDF-1.4\n%% not really a pdf", "application/pdf")),
+        ("files", ("broken.docx", b"PK\x03\x04 not really a docx", "application/octet-stream")),
+    ]
+    with caplog.at_level(logging.INFO, logger="sirah"):
+        assert api.post("/sessions/corrupt/analyze", files=files).status_code == 202
+        st = wait_ready(api, "corrupt")
+    assert st["status"] == "ready"
+    assert [r["status"] for r in st["roster"]] == ["NEEDS_REVIEW", "NEEDS_REVIEW"]
+    logs = "\n".join(r.getMessage() for r in caplog.records)
+    assert '"event": "parse_error"' in logs  # observable, by error class only
+    assert "not really" not in logs  # never the content

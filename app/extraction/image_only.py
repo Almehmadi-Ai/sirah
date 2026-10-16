@@ -15,7 +15,7 @@ def page_image_info(path: str) -> list[dict[str, Any]]:
     try:
         import pypdfium2 as pdfium
         from pypdfium2 import raw as pdfium_c
-    except Exception:
+    except ImportError:
         # Without the PDF backend we cannot inspect images; assume text pages.
         return out
 
@@ -23,19 +23,19 @@ def page_image_info(path: str) -> list[dict[str, Any]]:
     with PDFIUM_LOCK:
         try:
             pdf = pdfium.PdfDocument(path)
-        except Exception:
+        except (pdfium.PdfiumError, OSError, ValueError):  # not a PDF / unreadable
             return out
         try:
             for i in range(len(pdf)):
                 try:
                     page = pdf[i]
-                except Exception:
+                except pdfium.PdfiumError:
                     continue
                 text_page = None
                 try:
                     text_page = page.get_textpage()
                     txt = text_page.get_text_range() or ""
-                except Exception:
+                except pdfium.PdfiumError:
                     txt = ""
                 try:
                     image_count = sum(
@@ -43,7 +43,7 @@ def page_image_info(path: str) -> list[dict[str, Any]]:
                         for obj in page.get_objects()
                         if getattr(obj, "type", None) == pdfium_c.FPDF_PAGEOBJ_IMAGE
                     )
-                except Exception:
+                except pdfium.PdfiumError:
                     image_count = 0
                 if text_page is not None:
                     text_page.close()

@@ -1,36 +1,13 @@
-# Keep the build context small and reproducible. The image only needs
-# requirements.txt + app/ + tests/ (see Dockerfile); everything else is excluded.
+# Build context = an allowlist. The image needs only the application code, the
+# pinned dependency lock and the licence files (see Dockerfile); everything else
+# - tests, docs, scripts, the generated corpus, virtualenvs, git metadata and,
+# above all, any local .env holding secrets - is excluded by default.
+*
+!app/
+!requirements-lock.txt
+!LICENSE
+!NOTICE
 
-# Virtualenvs (Quick start creates .venv — never ship it in the build context)
-.venv/
-venv/
-env/
-
-# Python caches / build artifacts
-__pycache__/
-*.py[cod]
-*.egg-info/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-build/
-dist/
-
-# Secrets / local config
-.env
-.env.*
-
-# Generated synthetic corpus (regenerated on demand)
-synthetic_data/cvs/
-synthetic_data/jds/
-synthetic_data/bundles/
-synthetic_data/manifest.json
-
-# Repo material not needed inside the image
-.git/
-.github/
-docs/
-scripts/
-*.md
+# ...minus build artefacts that may sit inside app/
+**/__pycache__/
+**/*.py[cod]

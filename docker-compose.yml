@@ -1,11 +1,11 @@
-name: cv-screening
+name: sirah
 
 services:
-  cv-screening:
+  sirah:
     build:
       context: .
-    image: cv-screening:0.1.0
-    container_name: cv-screening
+    image: sirah:0.2.0
+    container_name: sirah
     restart: unless-stopped
     ports:
       # localhost only. Any local client reaches it via host.docker.internal:8089.
@@ -21,10 +21,11 @@ services:
       - CV_OCR_LANGS=ara+eng
       - CV_OCR_MIN_CONFIDENCE=60
       - CV_OCR_DPI=300
-      # Vision OCR stays OFF in MVP. If ever set, it MUST be a local URL.
-      - CV_VISION_OCR_URL=
-      - CV_ALLOW_CLOUD_OCR=false
-      # On-box model backends (reuse the existing Ollama).
+      # On-box model backends (a local Ollama). This endpoint receives
+      # candidate CV text and page images, so the service REFUSES TO START unless
+      # it is local (loopback, private network, host.docker.internal, or a
+      # single-label service name such as `ollama`). CV_ALLOW_REMOTE_ENDPOINTS=true
+      # overrides that deliberately and logs a privacy warning on every start.
       - CV_OLLAMA_URL=http://host.docker.internal:11434
       - CV_LLM_MODEL=qwen3.6:35b
       - CV_EMBED_MODEL=bge-m3:latest
@@ -33,16 +34,22 @@ services:
       - CV_VLM_MODEL=qwen2.5vl:7b
       - CV_VLM_TIMEOUT=120
       - CV_VLM_MAX_PAGES_PER_DOC=6
-      # Session persistence (survives container restart; same TTL policy).
-      - CV_DATA_DIR=/app/data
+      # Storage is MEMORY-ONLY by default: candidate data never touches disk and a
+      # restart drops every session. To let ready sessions survive a restart, opt
+      # in by uncommenting CV_DATA_DIR here and the two `cv_data` volume entries
+      # below (sessions are written as JSON, expire on the same TTL, and /reset
+      # deletes them).
+      # - CV_DATA_DIR=/app/data
       # Ephemeral session + ingest caps.
       - CV_SESSION_TTL_MINUTES=120
       - CV_MAX_FILES=300
       - CV_MAX_PAGES_PER_DOC=30
       - CV_MAX_UPLOAD_MB=50
-      - CV_MAX_ZIP_ENTRIES=500
-    volumes:
-      - cv_data:/app/data
+      - CV_MAX_ZIP_ENTRIES=1000
+      - CV_MAX_ZIP_TOTAL_MB=250
+      - CV_MAX_ZIP_RATIO=100
+    # volumes:
+    #   - cv_data:/app/data
     extra_hosts:
       # so host.docker.internal resolves on Linux hosts too (no-op on Docker Desktop)
       - "host.docker.internal:host-gateway"
@@ -57,5 +64,5 @@ services:
         limits:
           memory: 3g
 
-volumes:
-  cv_data:
+# volumes:
+#   cv_data:

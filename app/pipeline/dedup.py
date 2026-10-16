@@ -1,7 +1,9 @@
 """Within-batch duplicate detection (ephemeral — only across this upload).
 
-Two candidates are duplicates only if they share a *real* contact key (normalized
-email or last-9 phone digits) AND a similar name. Template/placeholder contacts —
+An identical document (same content hash, same pages) is an exact duplicate,
+whatever its file name and whether or not it carries contact details. Beyond
+exact copies, two candidates are duplicates only if they share a *real* contact
+key (normalized email or last-9 phone digits) AND a similar name. Template/placeholder contacts —
 shared by many candidates (e.g. Canva samples with hello@reallygreatsite.com or
 +123-456-7890) — are NOT treated as identity: any key that appears in 3+ candidates
 is ignored, and known placeholder patterns are ignored outright. This prevents the
@@ -11,8 +13,8 @@ false "everyone is a duplicate" collapse seen on template CV batches.
 from __future__ import annotations
 
 import re
-from typing import Any
 
+from ..profiles import CandidateProfile
 from . import anchors
 
 _PLACEHOLDER_EMAIL = (
@@ -53,12 +55,12 @@ def _placeholder_phone(k: str) -> bool:
     return False
 
 
-def _name_tokens(p: dict[str, Any]) -> set:
+def _name_tokens(p: CandidateProfile) -> set:
     nm = (p.get("identity", {}).get("full_name", {}) or {}).get("value") or ""
     return {t for t in re.split(r"\s+", nm.lower().strip()) if len(t) > 1}
 
 
-def _keys(p: dict[str, Any]) -> set:
+def _keys(p: CandidateProfile) -> set:
     ident = p.get("identity", {})
     out = set()
     for e in ident.get("emails", []):
@@ -71,7 +73,22 @@ def _keys(p: dict[str, Any]) -> set:
     return out
 
 
-def mark_duplicates(profiles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def mark_duplicates(profiles: list[CandidateProfile]) -> list[CandidateProfile]:
+    # Exact copies first: the same bytes uploaded twice (in one batch or across
+    # appended batches) are a duplicate by content hash - no identity heuristic
+    # needed, and a CV without contact details is caught too.
+    first_copy: dict[tuple[str, tuple[int, ...]], str] = {}
+    for p in profiles:
+        src = p.get("source") or {}
+        digest = src.get("sha256")
+        if not digest:
+            continue  # profiles from older persisted sessions carry no hash
+        key = (digest, tuple(src.get("page_range") or ()))
+        if key in first_copy:
+            _mark_dup(p, first_copy[key])
+        else:
+            first_copy[key] = p["candidate_id"]
+
     # frequency of each key across the batch; keys shared by 3+ candidates are
     # template artifacts, not a real shared identity.
     freq: dict[str, int] = {}
@@ -84,6 +101,8 @@ def mark_duplicates(profiles: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     seen: dict[str, str] = {}  # valid key -> first candidate_id
     for p in profiles:
+        if p.get("duplicate_of"):
+            continue  # an exact copy; its original carries the identity keys
         ks = {k for k in cand_keys[p["candidate_id"]] if freq.get(k, 0) <= 2}
         dup_of = None
         for k in ks:
@@ -131,13 +150,9 @@ def mark_duplicates(profiles: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 sq = _skills(q)
                 jac = (len(sp & sq) / len(sp | sq)) if (sp | sq) else 0.0
                 if jac >= 0.7:
-                    # Same name + overlapping skills is NOT enough to call it a
-                    # duplicate: two different people in the same profession share
-                    # a skill vocabulary. Only near-identical DOCUMENT CONTENT is a
-                    # true duplicate (a re-uploaded template); materially different
-                    # content (different employers/dates/tenure) is a CONFLICT for a
-                    # human to resolve - never a silent exclusion. Mirrors the
-                    # primary-key path so both routes decide dup-vs-conflict the same.
+                    # Same name + overlapping skills is not enough: people in one
+                    # profession share a skill vocabulary. Decide duplicate vs
+                    # conflict by content, exactly as the contact-key path does.
                     if _content_similarity(p, q) >= CONTENT_DUP_JACCARD:
                         _mark_dup(p, q["candidate_id"])
                     else:
@@ -152,12 +167,12 @@ def mark_duplicates(profiles: list[dict[str, Any]]) -> list[dict[str, Any]]:
 CONTENT_DUP_JACCARD = 0.80
 
 
-def _tokens(p: dict[str, Any]) -> set:
+def _tokens(p: CandidateProfile) -> set:
     txt = " ".join((pg.get("text") or "") for pg in p.get("_pages") or [])
     return set(re.findall(r"[a-z0-9؀-ۿ]{2,}", txt.lower()))
 
 
-def _content_similarity(a: dict[str, Any], b: dict[str, Any]) -> float:
+def _content_similarity(a: CandidateProfile, b: CandidateProfile) -> float:
     ta, tb = _tokens(a), _tokens(b)
     if not ta or not tb:
         # No raw text to compare (e.g. legacy profiles) — preserve the previous

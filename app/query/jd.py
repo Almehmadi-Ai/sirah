@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..pipeline import llm
-from ..pipeline.extract import _pick  # alias-tolerant getter
+from ..pipeline.llm import pick
 
 JD_SYSTEM = (
     "Extract hiring requirements from the job description. Return ONLY JSON with "
@@ -44,16 +44,16 @@ def parse_jd(text: str, settings) -> dict[str, Any]:
             merged.update(out[wrap])
             out = merged
     must = _as_str_list(
-        _pick(
+        pick(
             out,
             ["must_have_skills", "must_have", "required_skills", "mandatory_skills", "skills"],
             default=[],
         )
     )
     nice = _as_str_list(
-        _pick(out, ["nice_to_have_skills", "nice_to_have", "preferred_skills"], default=[])
+        pick(out, ["nice_to_have_skills", "nice_to_have", "preferred_skills"], default=[])
     )
-    miny = _pick(
+    miny = pick(
         out,
         [
             "min_years_experience",
@@ -66,7 +66,7 @@ def parse_jd(text: str, settings) -> dict[str, Any]:
         default=None,
     )
     role = str(
-        _pick(out, ["role_title", "job_title", "title", "role", "position"], default="")
+        pick(out, ["role_title", "job_title", "title", "role", "position"], default="")
     ).strip()
     return {
         "role_text": role or text[:120],

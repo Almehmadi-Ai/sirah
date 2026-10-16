@@ -1,8 +1,9 @@
 """Deterministic score aggregation, gating, banding and ranking.
 
 Pure functions over (rubric, verdicts): no I/O, no randomness, no model calls.
-Same inputs => identical outputs, always. All policy constants are explicit,
-generic (role-independent) and env-overridable.
+Same inputs => identical outputs, always. All policy constants are explicit
+and role-independent; the two requirement weights can be overridden with
+CV_W_REQUIRED / CV_W_PREFERRED.
 
 Scoring contract for uncertainty:
   * 'unverified' requirements are EXCLUDED from the denominator and disclosed
@@ -29,9 +30,9 @@ BAND_STRONG, BAND_GOOD, BAND_PARTIAL = 80, 60, 40
 CAP_HARD_MISS = 45  # Partial ceiling when a hard minimum is definitively missing
 CAP_NO_CORE = 25  # Weak cap when no core required capability is evidenced
 CAP_LOW_CORE = 39  # Weak ceiling when core evidenced coverage < 25%
-CAP_UNVERIFIED_REQ = BAND_STRONG - 1  # a candidate can never look 'Strong'
-# while a REQUIRED item is unverifiable —
-# missing information must not pay
+# A candidate can never look 'Strong' while a REQUIRED item is unverifiable:
+# missing information must not pay.
+CAP_UNVERIFIED_REQ = BAND_STRONG - 1
 MIN_VERIFIABLE = 0.5  # below this fraction of verifiable required items -> review lane
 
 HARD_RTYPES = {"experience_years", "education", "certification", "language"}

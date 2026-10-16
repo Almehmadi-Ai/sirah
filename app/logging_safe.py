@@ -29,7 +29,7 @@ import logging
 import re
 from typing import Any
 
-logger = logging.getLogger("cv_screening")
+logger = logging.getLogger("sirah")
 
 _SLUG = re.compile(r"[^A-Za-z0-9_.:+-]")
 
@@ -48,9 +48,9 @@ def _slug(v: Any, maxlen: int = 48) -> str | None:
 
 def hash_session(chat_id: Any) -> str | None:
     """Stable, NON-identifying handle for a session. The raw ``chat_id`` is
-    client-supplied and could contain PII, so it is never logged - only this
-    salted-length sha1 prefix, which is stable within a deployment for
-    correlation but does not reveal the original id."""
+    client-supplied and could contain PII, so it is never logged - only a
+    truncated, unsalted SHA-1 of it, stable for correlating log lines. (A
+    guessable chat id can still be confirmed by hashing it.)"""
     if chat_id is None:
         return None
     return "s_" + hashlib.sha1(str(chat_id).encode("utf-8")).hexdigest()[:10]

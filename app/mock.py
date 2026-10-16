@@ -5,7 +5,7 @@ external API, no paid key, no internet. Every model-dependent step is replaced b
 a deterministic, rule-based stand-in so ``docker compose up`` works out of the box
 for anyone who clones the repo.
 
-Design goals (match the real path, honestly):
+Design goals (match the real path):
   * DETERMINISTIC & reproducible - same input yields byte-identical output.
   * LOGICAL, not canned - the output is parsed from the ACTUAL input text, so
     different CVs / JDs yield different, testable results (never one fixed reply).
@@ -30,7 +30,7 @@ import hashlib
 import re
 from typing import Any
 
-MOCK_MARKER = "mock"
+from .pipeline.anchors import normalize_digits
 
 _PAGE_RE = re.compile(r"^\[Page\s+\d+\]\s*$", re.I)
 _DATE_RANGE = re.compile(
@@ -339,17 +339,125 @@ def _extract(user_text: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 
 
+# A sentence ends at . ! ? or the Arabic question mark when followed by space;
+# a pasted one-line JD ("AI Engineer. Required skills: A, B. Minimum 4 years.")
+# must not run its requirements together. Semicolons are NOT boundaries: they
+# separate items inside one requirement list.
+_SENTENCE_END = re.compile(r"(?<=[.!?؟])\s+")
+# ...except after a mid-sentence abbreviation ("web frameworks, e.g. Django").
+# Words that usually END a sentence ("etc.", "yrs.") are deliberately absent.
+_ABBREVIATION = re.compile(
+    r"\b(?:e\.g|i\.e|vs|incl|approx|cf|viz|esp|dr|mr|mrs|ms|prof|"
+    r"b\.sc|m\.sc|ph\.d|b\.a|m\.a|u\.s|u\.k)\.$",
+    re.I,
+)
+
+# Years-of-experience floors, most explicit phrasing first. The generic "N years"
+# is only trusted in a sentence that is about experience, so "a company with 20
+# years of history" is never read as a 20-year minimum.
+_YEAR_UNITS = r"(?:years?|yrs?)"
+_AR_YEAR_UNITS = r"(?:سنوات|سنة|سنه|عام|أعوام|اعوام)"
+_YEARS_FLOOR = [
+    re.compile(
+        r"\b(?:minimum|min\.?|at\s+least|no\s+less\s+than|not\s+less\s+than|over|more\s+than)"
+        rf"\s*(?:of\s+)?(\d{{1,2}})\s*\+?\s*{_YEAR_UNITS}\b",
+        re.I,
+    ),
+    re.compile(rf"\b(\d{{1,2}})\s*\+\s*{_YEAR_UNITS}\b", re.I),
+    re.compile(rf"\b(\d{{1,2}})\s*(?:-|–|to)\s*\d{{1,2}}\s*{_YEAR_UNITS}\b", re.I),  # lower bound
+    re.compile(
+        r"(?:الحد\s+ال[اأ]دن[ىي]|لا\s+تقل\s+عن|على\s+ال[اأ]قل)\s*(?:من\s+)?(\d{1,2})\s*"
+        + _AR_YEAR_UNITS
+    ),
+    re.compile(r"(\d{1,2})\s*" + _AR_YEAR_UNITS + r"\s+(?:من\s+)?(?:ال)?خبر[ةه]"),
+    re.compile(r"خبر[ةه]\s+(\d{1,2})\s*" + _AR_YEAR_UNITS),
+]
+_EXPERIENCE_WORD = re.compile(r"experience|experienced|خبر[ةه]", re.I)
+
+# Labels before a colon that introduce a requirement list (English + Arabic).
+_MUST_LABELS = (
+    "required",
+    "must",
+    "requirement",
+    "skill",
+    "technolog",
+    "tech stack",
+    "proficient",
+    "experience with",
+    "knowledge of",
+    "responsibilit",
+    "qualification",
+    "competenc",
+    "مطلوب",
+    "المطلوب",
+    "متطلبات",
+    "المتطلبات",
+    "المهارات",
+    "مهارات",
+    "المؤهلات",
+    "الشروط",
+)
+_NICE_LABELS = (
+    "nice",
+    "preferred",
+    "prefer",
+    "bonus",
+    "plus ",
+    "desirable",
+    "advantage",
+    "good to have",
+    "يفضل",
+    "يُفضل",
+    "مفضل",
+    "ميزة",
+    "اختياري",
+)
+_ROLE_LABEL = re.compile(
+    r"^\s*(?:role|position|title|job\s*title|الوظيفة|وظيفة|المسمى\s+الوظيفي|المنصب)\s*[:\-]\s*(.+)$",
+    re.I,
+)
+
+
+def _jd_statements(text: str) -> list[str]:
+    """Lines, then sentences within each line (abbreviation-aware)."""
+    out: list[str] = []
+    for line in _lines(text):
+        buf = ""
+        for part in _SENTENCE_END.split(line):
+            buf = f"{buf} {part}" if buf else part
+            if not _ABBREVIATION.search(buf):
+                out.append(buf)
+                buf = ""
+        if buf:
+            out.append(buf)
+    return out
+
+
+def _min_years(statements: list[str]) -> int | None:
+    texts = [normalize_digits(st) for st in statements]  # Arabic-Indic digits -> ASCII
+    for rx in _YEARS_FLOOR:
+        for t in texts:
+            m = rx.search(t)
+            if m:
+                return int(m.group(1))
+    for t in texts:
+        if _EXPERIENCE_WORD.search(t):
+            m = _YEARS.search(t)
+            if m:
+                return int(m.group(1))
+    return None
+
+
 def _parse_jd(jd_text: str) -> dict[str, Any]:
-    lines = _lines(jd_text)
-    role = lines[0][:120] if lines else ""
-    for ln in lines:
-        m = re.match(r"(?i)^\s*(?:role|position|title|job\s*title)\s*[:\-]\s*(.+)$", ln)
+    statements = _jd_statements(jd_text)
+    role = statements[0].rstrip(" .")[:120] if statements else ""
+    for st in statements:
+        m = _ROLE_LABEL.match(st)
         if m:
-            role = m.group(1).strip()[:120]
+            role = m.group(1).strip().rstrip(" .")[:120]
             break
 
-    ym = _YEARS.search(jd_text)
-    min_years = int(ym.group(1)) if ym else None
+    min_years = _min_years(statements)
 
     degree_level = ""
     low_all = jd_text.lower()
@@ -371,44 +479,20 @@ def _parse_jd(jd_text: str) -> dict[str, Any]:
             ):
                 target.append(s)
 
-    must_labels = (
-        "required",
-        "must",
-        "requirement",
-        "skill",
-        "technolog",
-        "tech stack",
-        "proficient",
-        "experience with",
-        "knowledge of",
-        "responsibilit",
-        "qualification",
-        "competenc",
-    )
-    nice_labels = (
-        "nice",
-        "preferred",
-        "prefer",
-        "bonus",
-        "plus ",
-        "desirable",
-        "advantage",
-        "good to have",
-    )
-    for ln in lines:
+    for st in statements:
         # classify by the label BEFORE a colon ("Required skills:", "Nice-to-have:")
-        mlabel = re.match(r"^\s*([^:]{1,50}):\s*(.+)$", ln)
+        mlabel = re.match(r"^\s*([^:]{1,50}):\s*(.+)$", st)
         if mlabel:
             label = mlabel.group(1).lower()
             rest = mlabel.group(2)
-            if any(w in label for w in nice_labels):
+            if any(w in label for w in _NICE_LABELS):
                 _collect(nice, rest)
                 continue
-            if any(w in label for w in must_labels):
+            if any(w in label for w in _MUST_LABELS):
                 _collect(must, rest)
                 continue
-        if ln.lstrip().startswith(("-", "•", "*", "·")):
-            _collect(must, ln.lstrip("-•*· ").strip())
+        if st.lstrip().startswith(("-", "•", "*", "·")):
+            _collect(must, st.lstrip("-•*· ").strip())
 
     return {
         "role_title": role,
@@ -566,7 +650,7 @@ def _judge(user_text: str) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------
-# public dispatch (used by llm.chat_json / embeddings.embed / llm.ping)
+# public dispatch (used by llm.chat_json and embeddings.embed)
 # --------------------------------------------------------------------------
 
 

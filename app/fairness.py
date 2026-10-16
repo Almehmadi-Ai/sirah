@@ -1,4 +1,4 @@
-"""Fairness / bias-audit layer for HR screening.
+"""Fairness reporting for HR screening: leakage checks and adverse-impact ratios.
 
 Two complementary checks, both deterministic:
 
@@ -10,21 +10,27 @@ Two complementary checks, both deterministic:
    exposes a protected attribute as a labelled field. It turns the golden-test
    guarantee ("0 protected leaks") into a runtime, reportable capability.
 
-2. FOUR-FIFTHS / ADVERSE-IMPACT AUDIT (opt-in, needs demographic labels):
-   the EEOC four-fifths rule and NYC Local Law 144 measure whether a screening
-   tool selects protected groups at materially different rates. Because the tool
-   is group-blind it cannot know the labels itself; for a formal audit the
-   customer supplies demographic labels for a representative sample. Given those
-   labels and each candidate's selection outcome, this computes the selection
-   rate per group and the impact ratio (min-rate / max-rate); an impact ratio
-   below 0.80 flags potential adverse impact.
+2. FOUR-FIFTHS ADVERSE-IMPACT RATIOS (opt-in, needs demographic labels):
+   the four-fifths rule (from the US Uniform Guidelines on Employee Selection
+   Procedures) treats a group selected at under 80% of the most-selected group's
+   rate as evidence of potential adverse impact, and bias audits - such as the
+   independent audit NYC Local Law 144 requires - report the same impact ratios.
+   Because the tool is group-blind it cannot know the labels itself: the operator
+   supplies demographic labels for a representative sample. Given those labels
+   and each candidate's selection outcome, this computes the selection rate per
+   group and the impact ratio (rate / highest rate); a ratio below 0.80 flags
+   potential adverse impact.
 
-Nothing here scores or ranks candidates and nothing stores PII — it only audits.
+   These are inputs to a bias audit, not an audit: they are only as good as the
+   operator's labels, and a regulated audit must be performed independently.
+
+Nothing here scores or ranks candidates and nothing stores PII — it only reports.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from .pipeline.extract import PROTECTED_KEYS
@@ -62,7 +68,7 @@ def _walk_strings(obj: Any):
             yield from _walk_strings(v)
 
 
-def scan_profile_leakage(profiles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def scan_profile_leakage(profiles: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Confirm no profile carries a populated protected attribute. Returns a list
     of leak records (empty = clean). Ignores the audit bookkeeping key
     ``_excluded_by_policy`` (which merely lists what is excluded)."""
@@ -87,7 +93,7 @@ def scan_text_leakage(text: str) -> list[dict[str, Any]]:
 
 
 def leakage_report(
-    profiles: list[dict[str, Any]], texts: list[str] | None = None
+    profiles: Sequence[Mapping[str, Any]], texts: list[str] | None = None
 ) -> dict[str, Any]:
     leaks = scan_profile_leakage(profiles)
     for t in texts or []:
@@ -103,12 +109,12 @@ def leakage_report(
 def four_fifths_audit(
     selected: dict[str, bool], groups: dict[str, dict[str, str]]
 ) -> dict[str, Any]:
-    """EEOC four-fifths / NYC LL144 adverse-impact audit.
+    """Four-fifths-rule adverse-impact ratios (an input to a bias audit).
 
     ``selected`` maps candidate_id -> was-selected (e.g. shortlisted / above a
     fit threshold). ``groups`` maps candidate_id -> {axis: label} for one or
     more protected axes (e.g. {"gender": "female", "race": "asian"}), supplied
-    externally for the audit. Returns per-axis selection rates, impact ratios
+    externally by the operator. Returns per-axis selection rates, impact ratios
     and an adverse-impact flag (impact ratio < 0.80)."""
     axes: dict[str, dict[str, dict[str, int]]] = {}
     for cid, grp in groups.items():

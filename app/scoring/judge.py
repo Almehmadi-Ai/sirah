@@ -1,7 +1,7 @@
-"""Grounded requirement-reasoning judge (partial-redesign brain).
+"""Grounded requirement-reasoning judge.
 
-Replaces the brittle keyword+cosine matcher with a per-requirement REASONING
-judgment made by the local LLM, hard-constrained to be evidence-grounded:
+A per-requirement REASONING judgment made by the local LLM, in place of the
+keyword+cosine matcher, hard-constrained to be evidence-grounded:
 
   * the model sees the FULL requirement text (meaning preserved, not a label) and
     a NUMBERED digest of the candidate's evidence IN CONTEXT (role/company/dates,
@@ -15,8 +15,8 @@ judgment made by the local LLM, hard-constrained to be evidence-grounded:
     (is this the RELEVANT experience? is this a RELATED degree? is this the
     SPECIFIC credential?), never the numbers.
 
-Output is the SAME verdict list `engine.score_candidate` already consumes, so
-scoring, caps, banding, ranking and the code-rendered report are unchanged. The
+Output is the same verdict list the legacy matcher produces, so
+``engine.score_candidate`` and everything after it is shared by both. The
 call is BATCHED (one LLM call per candidate) and temperature 0; the caller caches
 per (candidate signature, jd hash) so repeats are byte-identical.
 
@@ -30,11 +30,11 @@ from __future__ import annotations
 from typing import Any
 
 from ..pipeline import llm
-from ..pipeline.extract import verify_quote, verify_term
+from ..pipeline.evidence import verify_quote, verify_term
 
 # Engine-compatible verdict vocabulary. 'contradicted'/'review' are richer states
-# the judge may emit; we keep the deterministic engine unchanged by mapping them
-# to an engine verdict while preserving the nuance in the detail text.
+# the judge may emit; they are mapped to an engine verdict, and the nuance is kept
+# in the detail text.
 _ENGINE_VERDICTS = {"met", "partial", "missing", "unverified", "not_assessable"}
 _MAP = {"contradicted": "missing", "review": "unverified", "not applicable": "not_assessable"}
 
@@ -289,12 +289,11 @@ def judge_candidate(
             verdict = "unverified"
         reason = str(v.get("reason") or "")[:150]
         rt = r["rtype"]
-        # Calibration guard (general, not profession-specific): these candidates
-        # already passed the readability gate, so a skill/responsibility the CV
-        # does not show is MISSING, not unverified - a candidate must not gain by
-        # omitting a required item. 'unverified' stays valid only where absence is
-        # genuinely unknowable: no certifications/languages section, or years that
-        # could not be computed.
+        # Calibration guard: these candidates already passed the readability gate,
+        # so a skill/responsibility the CV does not show is MISSING, not unverified
+        # - a candidate must not gain by omitting a required item. 'unverified'
+        # stays valid only where absence is genuinely unknowable: no
+        # certifications/languages section, or years that could not be computed.
         if verdict == "unverified":
             if rt in ("skill", "responsibility"):
                 verdict = "missing"

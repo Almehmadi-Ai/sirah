@@ -1,5 +1,5 @@
-"""Resolve natural-language references to concrete candidate_ids (plan section
-14). Deterministic-first: ordinals ('candidate 2', 'the second one'), explicit
+"""Resolve natural-language references to concrete candidate_ids.
+Deterministic-first: ordinals ('candidate 2', 'the second one'), explicit
 ids, names, and anaphora ('those', 'the previous shortlist/ranking'). Fuzzy
 references ('the weak ones') are handled in the engine with an echoed
 interpretation, never silently guessed here."""

@@ -1,4 +1,4 @@
-"""Conversational query engine (plan sections 13-14). Routes a question to an
+"""Conversational query engine. Routes a question to an
 intent, runs it over the session's structured store, updates the multi-turn
 view-state, and returns an evidence-cited markdown answer. Deterministic-first;
 the LLM is used only for JD parsing. Every answer ends with the HR disclaimer.
@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from ..reasons import profile_flags
 from . import jd, references, scoring
 
 DISCLAIMER = (
@@ -49,7 +50,7 @@ def _ev(ev) -> str:
 
 
 def _flags(p) -> str:
-    r = p["extraction"]["reasons"]
+    r = profile_flags(p)
     return f"  ⚠️ _{', '.join(r)}_" if r else ""
 
 
@@ -107,6 +108,18 @@ def _is_shortlist(ql):
     return bool(re.search(r"\bshortlist\b|short[- ]?list|final list|final selection", ql))
 
 
+def _by_years(ql):
+    """An explicit request to order by experience ("rank by years", "sort them by
+    experience", "who is the most experienced") - a sort key, not a role."""
+    return bool(
+        re.search(
+            r"\b(?:by|on)\s+(?:(?:total\s+)?years?(?:\s+of\s+experience)?|experience|tenure|seniority)\b"
+            r"|\bmost\s+(?:experienced|senior|years)\b|\b(?:longest|most)\s+experience\b",
+            ql,
+        )
+    )
+
+
 def _is_rank(ql):
     return bool(
         re.search(
@@ -147,7 +160,7 @@ def answer(session, question: str, settings) -> dict[str, Any]:
         return _do_years_filter(session, q, yt)
     if _is_shortlist(ql):
         return _do_shortlist(session, q, settings)
-    if _is_rank(ql):
+    if _is_rank(ql) or _by_years(ql):
         return _do_rank(session, q, settings)
     if _is_who_has(ql):
         return _do_who_has(session, q, settings)
@@ -315,32 +328,39 @@ def _do_compare(session, q, settings):
     return _result("compare", "\n".join(md), refs, session)
 
 
-def _do_rank(session, q, settings):
+def _ranked(session, q, settings):
+    """(criteria, profiles, scored) for the working set. An explicit 'by years'
+    request is a plain sort on verified years; anything else is the blended
+    role-fit ranking."""
     crit = _criteria_from_query(q)
-    ids = _current_ids(session)
-    profiles = _profiles(session, ids)
-    index = _index(session, profiles, settings)
-    scored = scoring.rank(profiles, crit, index)
+    profiles = _profiles(session, _current_ids(session))
+    if _by_years(q.lower()):
+        crit["role_text"] = "years of experience"
+        return crit, profiles, scoring.rank_by_years(profiles)
+    return crit, profiles, scoring.rank(profiles, crit, _index(session, profiles, settings))
+
+
+def _do_rank(session, q, settings):
+    crit, profiles, scored = _ranked(session, q, settings)
     session.view_state["last_ranking"] = [
         {"candidate_id": p["candidate_id"], "score": sc["score"]} for p, sc in scored
     ]
     session.view_state["last_result"] = [p["candidate_id"] for p, _ in scored]
     n = references.parse_top_n(q, default=min(len(scored), 10))
-    head = f"**Ranking for “{crit['role_text']}”** (over {len(profiles)} candidate(s)):"
+    if crit.get("sort") == "years":
+        head = f"**Ranking by {crit['role_text']}**"
+    else:
+        head = f"**Ranking for “{crit['role_text']}”**"
     return _result(
         "rank",
-        head + "\n" + _render_ranking(scored[:n]),
+        head + f" (over {len(profiles)} candidate(s)):\n" + _render_ranking(scored[:n]),
         session.view_state["last_result"],
         session,
     )
 
 
 def _do_shortlist(session, q, settings):
-    crit = _criteria_from_query(q)
-    ids = _current_ids(session)
-    profiles = _profiles(session, ids)
-    index = _index(session, profiles, settings)
-    scored = scoring.rank(profiles, crit, index)
+    crit, _, scored = _ranked(session, q, settings)
     n = references.parse_top_n(q, default=min(3, len(scored)))
     top = scored[:n]
     session.view_state["last_shortlist"] = [p["candidate_id"] for p, _ in top]
@@ -384,6 +404,11 @@ def _do_jd_rank(session, q, settings):
 def _render_ranking(scored, with_reasons: bool = False) -> str:
     lines = []
     for rank_i, (p, sc) in enumerate(scored, 1):
+        if sc.get("by_years"):
+            lines.append(f"\n**{rank_i}. {_label(p)}** — {_years(p):g} years{_flags(p)}")
+            top = ", ".join(s["name"] for s in p["skills"][:5]) or "—"
+            lines.append(f"   - skills: {top}")
+            continue
         cov = (
             ""
             if sc["coverage"] is None
@@ -485,7 +510,7 @@ def _criteria_from_query(q: str) -> dict[str, Any]:
     else:
         m = re.search(
             r"\b(?:best|top|strongest|recommend|suitable|rank)\s+"
-            r"(?:\d+\s+)?(?:candidates?\s+)?(?:for\s+)?(.+)$",
+            r"(?:\d+\b\s*)?(?:candidates?\s+)?(?:for\s+)?(.+)$",
             ql,
         )
         if m:
@@ -494,12 +519,19 @@ def _criteria_from_query(q: str) -> dict[str, Any]:
             m = re.search(r"\bstrong(?:est)? in\s+(.+)$", ql)
             role = m.group(1) if m else ""
     role = re.sub(r"[?.!]", "", role)
-    role = re.sub(r"\b(candidates?|now|the|a|an|role|position|for)\b", " ", role)
+    # sort keys and counts are not a role: "rank by years", "shortlist the top 2"
+    role = re.sub(
+        r"\b(?:by|on)\s+(?:years?|experience|tenure|seniority)(?:\s+of\s+experience)?\b", " ", role
+    )
+    role = re.sub(r"\b(candidates?|now|the|a|an|role|position|for|top|best|\d+)\b", " ", role)
     role = re.sub(r"\s+", " ", role).strip()
+    if not re.search(r"[^\W\d_]", role):  # nothing left but digits/punctuation
+        role = ""
     yt = references.parse_years_threshold(q)
     return {
         "must_have": [],
         "min_years": yt[1] if (yt and yt[0] == "gte") else None,
         "role_text": role or "overall suitability",
         "source": "role",
+        "sort": "years" if _by_years(q.lower()) else "fit",
     }
