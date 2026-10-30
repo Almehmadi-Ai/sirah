@@ -3,7 +3,7 @@
 # Base pinned to an exact patch release AND its multi-arch index digest, so a
 # rebuild is reproducible and a re-pushed tag cannot change what ships.
 # Dependabot (docker ecosystem) proposes digest/tag updates.
-FROM python:3.11.17-slim-bookworm@sha256:0a310eeecf4e1f5a0743f9a6520c90c88d089c903ca5fd283f501e3a805f5f89
+FROM python:3.11.17-slim-bookworm@sha256:f06d01d4ba3f8ad5af45a3ec87df19c1d317d8e8961edc0fabda61811af6f7cf
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
