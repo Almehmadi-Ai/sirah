@@ -1,24 +1,24 @@
 # Direct RUNTIME dependencies (mirrors pyproject.toml [project.dependencies]).
 # requirements-lock.txt is generated from this file and is what the Docker image
 # installs. Dev/test tools are in requirements-dev.txt.
-fastapi==0.143.0
+fastapi==0.162.0
 uvicorn[standard]==0.54.0
 python-multipart==0.0.32
 pydantic==2.14.1
 # starlette is pulled by FastAPI; pinned to the security-patched line.
-starlette==1.8.0
+starlette==1.10.0
 # PDF text + page rendering. pypdfium2 (Apache-2.0/BSD) renders pages and
 # inspects image objects — a permissive-licensed replacement for PyMuPDF (AGPL).
 pdfplumber==0.11.10
 pypdfium2==5.14.0
-pypdf==6.20.1
+pypdf==6.21.2
 # OCR
 pytesseract==0.3.13
-pillow==12.3.0
+pillow==13.0.0
 # HTTP client for local LLM / embedding calls
 httpx==0.28.1
 # Arabic shaping + bidi for OCR text
 arabic-reshaper==3.0.1
-python-bidi==0.6.11
+python-bidi==0.6.12
 # Word (.docx) upload parsing
 python-docx==1.2.0
