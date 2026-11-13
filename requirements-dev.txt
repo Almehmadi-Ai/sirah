@@ -2,8 +2,8 @@
 # Mirrors pyproject.toml [project.optional-dependencies].dev.
 # Local dev / CI:  pip install -r requirements.txt -r requirements-dev.txt
 #            (or:  pip install -e ".[dev]")
-pytest==9.1.1
-coverage[toml]==7.16.2
-ruff==0.17.0
-mypy==2.4.0
-fpdf2==2.8.9
+pytest==9.2.0
+coverage[toml]==7.17.2
+ruff==0.17.4
+mypy==2.4.1
+fpdf2==2.9.0
